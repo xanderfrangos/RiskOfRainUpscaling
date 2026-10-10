@@ -39,8 +39,10 @@ foreach ($relative in 'BepInEx\plugins\RiskOfRainUpscaling','BepInEx\patchers\Ri
         Copy-Item -LiteralPath $destination -Destination (Split-Path -Parent $backup) -Recurse -Force
     }
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
+    # Windows PowerShell 5.1 has no [IO.Path]::GetRelativePath.
+    $sourcePrefix = [IO.Path]::GetFullPath($sourceFolder).TrimEnd('\') + '\'
     Get-ChildItem -LiteralPath $sourceFolder -File -Recurse | ForEach-Object {
-        $relativeFile = [IO.Path]::GetRelativePath($sourceFolder, $_.FullName)
+        $relativeFile = $_.FullName.Substring($sourcePrefix.Length)
         $target = Join-Path $destination $relativeFile
         New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
         Copy-Item -LiteralPath $_.FullName -Destination $target -Force

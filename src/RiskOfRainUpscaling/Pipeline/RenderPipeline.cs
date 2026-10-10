@@ -353,10 +353,11 @@ namespace RiskOfRainUpscaling
             return source;
         }
         private bool DiagnosticsWanted => overlay.Value || capturing;
-        private bool HudOpacitySafe(Camera camera)
+        // Null when the HUD opacity replay is safe, otherwise why it is not (logged on change).
+        private string HudOpacityUnsafe(Camera camera)
         {
             // The overlay is IMGUI drawn after the HUD camera, outside the HUD opacity replay.
-            if(overlay.Value)return false;
+            if(overlay.Value)return "diagnostic overlay";
             const System.Reflection.BindingFlags flags=System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
             foreach(var effect in camera.GetComponents<MonoBehaviour>().Where(c=>c && c.isActiveAndEnabled)) {
                 var type=effect.GetType();
@@ -364,20 +365,26 @@ namespace RiskOfRainUpscaling
                 // DamageIndicator's zero-intensity branch resets its indicators
                 // and blits unchanged color. A nonzero intensity or an unknown
                 // image effect cannot safely share our pre-effect HUD opacity.
-                if(type.FullName!="RoR2.PostProcessing.DamageIndicator")return false;
+                if(type.FullName!="RoR2.PostProcessing.DamageIndicator")return "HUD image effect " + type.FullName;
                 var intensity=type.GetField("_indicatorValue",flags);
-                if(intensity==null || !(intensity.GetValue(effect) is float value) || !Mathf.Approximately(value,0))return false;
+                if(intensity==null || !(intensity.GetValue(effect) is float value) || !Mathf.Approximately(value,0))return "nonzero DamageIndicator";
             }
             // Screen-space overlay canvases render outside this camera's pass.
             foreach(var canvas in UnityEngine.Object.FindObjectsOfType<Canvas>())
-                if(canvas.isActiveAndEnabled && canvas.renderMode==RenderMode.ScreenSpaceOverlay && canvas.targetDisplay==camera.targetDisplay)return false;
-            return true;
+                if(canvas.isActiveAndEnabled && canvas.renderMode==RenderMode.ScreenSpaceOverlay && canvas.targetDisplay==camera.targetDisplay)return "screen-space overlay canvas " + canvas.name;
+            return null;
         }
+        private string hudOpacityReason="";
         private void BeforeCull(Camera camera)
         {
             if (active == null || !camera) return;
             if(camera==active.Hud){
-                bool safe=HudOpacitySafe(camera);
+                var unsafeReason=HudOpacityUnsafe(camera);
+                bool safe=unsafeReason==null;
+                if(unsafeReason!=hudOpacityReason){
+                    Log(safe?"FRAME_GEN_HUD_OPACITY safe; measured HUD opacity available":"FRAME_GEN_HUD_OPACITY unsafe reason=" + unsafeReason + "; the UI layer uses the opaque difference mask");
+                    hudOpacityReason=unsafeReason;
+                }
                 active.FgBefore.Clear();active.FgAfter.Clear();
                 active.FgBefore.IssuePluginEventAndData(NativeApi.FrameGenerationGetBeforeHudEvent(),Time.frameCount,safe?IntPtr.Zero:new IntPtr(1));
                 active.FgAfter.IssuePluginEventAndData(NativeApi.FrameGenerationGetAfterHudEvent(),safe?Time.frameCount:-Time.frameCount,IntPtr.Zero);

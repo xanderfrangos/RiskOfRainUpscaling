@@ -57,6 +57,11 @@ try {
         if($LASTEXITCODE -ne 0){throw "Hardware Frame Generation UI recomposition test failed, exit=$LASTEXITCODE"}
         Copy-Item -LiteralPath 'build\test-results\native.log' -Destination 'build\test-results\frame-generation-ui.log' -Force
         Copy-Item -LiteralPath 'build\test-results\FrameGeneration\sl.log' -Destination 'build\test-results\frame-generation-ui-sl.log' -Force
+        # The game's HUD camera draws into a RenderTexture (bottom-up rows on D3D); every HUD-less consumer must see top-down rows.
+        foreach($arguments in @(@('--fg','--visible','--hud-render-texture'),@('--fg','--visible','--ui-recomposition','--hud-render-texture'),@('--fg','--visible','--fsr','--hud-render-texture'),@('--fg','--visible','--fsr','--ui-recomposition','--hud-render-texture'))){
+            & 'build\native-nmake\RiskOfRainUpscaling.PipelineTests.exe' @arguments
+            if($LASTEXITCODE -ne 0){throw "Frame Generation RenderTexture HUD target test failed ($($arguments -join ' ')), exit=$LASTEXITCODE"}
+        }
         # Run on an interactive desktop: NVIDIA suppresses FG without foreground focus.
         foreach($multiplier in 2..6){
             & 'build\native-nmake\RiskOfRainUpscaling.PipelineTests.exe' --fg --visible --fg-multiplier $multiplier

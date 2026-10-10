@@ -2,6 +2,7 @@
 #include "Diagnostics/Profiler.h"
 #include "shaders/Fullscreen.h"
 #include "shaders/UiAlpha.h"
+#include "shaders/UiAlphaFlipped.h"
 #include <array>
 #include <map>
 #include <mutex>
@@ -86,13 +87,13 @@ struct HudOpacity::Impl : CaptureDraw {
     ComPtr<ID3D11RenderTargetView> colorView,alphaView;
     ComPtr<ID3D11ShaderResourceView> colorInput;
     ComPtr<ID3D11VertexShader> vertex;
-    ComPtr<ID3D11PixelShader> pixel;
+    ComPtr<ID3D11PixelShader> pixel,flippedPixel;
     ComPtr<ID3D11BlendState> opacityBlend;
     struct DepthPair {ComPtr<ID3D11DepthStencilState> original,readOnly;};
     std::map<ID3D11DepthStencilState*,DepthPair> depths;
     UINT width,height;
     int frame=0,finished=0;
-    bool valid=false;
+    bool valid=false,flipRows=false;
     const char* reason="no HUD capture";
     Impl(ID3D11Device* d,ID3D11DeviceContext* c,UINT w,UINT h):device(d),immediate(c),width(w),height(h){
         context=c;RequireHud(c->QueryInterface(IID_PPV_ARGS(&context1)));
@@ -105,6 +106,7 @@ struct HudOpacity::Impl : CaptureDraw {
         t.Format=DXGI_FORMAT_R8_UNORM;RequireHud(d->CreateTexture2D(&t,nullptr,&alpha));RequireHud(d->CreateRenderTargetView(alpha.Get(),nullptr,&alphaView));
         RequireHud(d->CreateVertexShader(FullscreenShader,sizeof(FullscreenShader),nullptr,&vertex));
         RequireHud(d->CreatePixelShader(UiAlphaShader,sizeof(UiAlphaShader),nullptr,&pixel));
+        RequireHud(d->CreatePixelShader(UiAlphaFlippedShader,sizeof(UiAlphaFlippedShader),nullptr,&flippedPixel));
         D3D11_BLEND_DESC b{};auto& rt=b.RenderTarget[0];rt.BlendEnable=TRUE;
         rt.SrcBlend=rt.SrcBlendAlpha=D3D11_BLEND_ONE;rt.DestBlend=rt.DestBlendAlpha=D3D11_BLEND_INV_SRC_ALPHA;
         rt.BlendOp=rt.BlendOpAlpha=D3D11_BLEND_OP_ADD;rt.RenderTargetWriteMask=D3D11_COLOR_WRITE_ENABLE_ALPHA;
@@ -163,16 +165,16 @@ struct HudOpacity::Impl : CaptureDraw {
         ComPtr<ID3DDeviceContextState> previous;context1->SwapDeviceContextState(extraction.Get(),&previous);
         auto r=alphaView.Get();context->OMSetRenderTargets(1,&r,nullptr);
         D3D11_VIEWPORT vp{0,0,static_cast<float>(width),static_cast<float>(height),0,1};context->RSSetViewports(1,&vp);
-        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);context->VSSetShader(vertex.Get(),nullptr,0);context->PSSetShader(pixel.Get(),nullptr,0);
+        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);context->VSSetShader(vertex.Get(),nullptr,0);context->PSSetShader(flipRows?flippedPixel.Get():pixel.Get(),nullptr,0);
         auto s=colorInput.Get();context->PSSetShaderResources(0,1,&s);
         context->Draw(3,0);context1->SwapDeviceContextState(previous.Get(),nullptr);
     }
 };
 HudOpacity::HudOpacity(ID3D11Device* d,ID3D11DeviceContext* c,UINT w,UINT h):impl(std::make_unique<Impl>(d,c,w,h)){}
 HudOpacity::~HudOpacity(){Cancel();}
-void HudOpacity::Begin(ID3D11Texture2D* target,int frame){
+void HudOpacity::Begin(ID3D11Texture2D* target,int frame,bool flipRows){
     Cancel();if(current){current->Invalidate("overlapping HUD captures");return;}
-    impl->target=target;impl->frame=frame;impl->finished=0;impl->valid=true;impl->reason="capturing";
+    impl->target=target;impl->frame=frame;impl->flipRows=flipRows;impl->finished=0;impl->valid=true;impl->reason="capturing";
     FLOAT clear[4]{};impl->context->ClearRenderTargetView(impl->colorView.Get(),clear);
     // SwapDeviceContextState and driver lazy initialization can select another
     // dispatch table. Install on the current table after the HUD target is ready.

@@ -22,6 +22,10 @@ static int width=256, height=144;
 static bool fsrUpscaler=false;
 // Streamline's presentation hooks count each present only when DLSS runs.
 static unsigned PresentStep(){return fsrUpscaler?0u:1u;}
+// --hud-render-texture: like a Unity HUD camera with an image effect, the HUD draws
+// into a separate RenderTexture with bottom-up rows; the final blit (simulated)
+// writes the top-down producer.
+static ID3D11Texture2D* hudRenderTexture=nullptr; // Owned by main.
 static bool DrawUiFixture(ID3D11Device* device,ID3D11DeviceContext* context,IDXGISwapChain* chain,int frame){
     ComPtr<ID3D11Device1> device1;ComPtr<ID3D11DeviceContext1> context1;
     if(FAILED(device->QueryInterface(IID_PPV_ARGS(&device1))) || FAILED(context->QueryInterface(IID_PPV_ARGS(&context1))))return false;
@@ -34,11 +38,18 @@ static bool DrawUiFixture(ID3D11Device* device,ID3D11DeviceContext* context,IDXG
     if(FAILED(device->CreateVertexShader(FullscreenShader,sizeof(FullscreenShader),nullptr,&vs)) || FAILED(device->CreatePixelShader(HudFixtureShader,sizeof(HudFixtureShader),nullptr,&ps)))return false;
     D3D11_BLEND_DESC bd{};auto& rt=bd.RenderTarget[0];rt.BlendEnable=TRUE;rt.SrcBlend=rt.SrcBlendAlpha=D3D11_BLEND_SRC_ALPHA;rt.DestBlend=rt.DestBlendAlpha=D3D11_BLEND_INV_SRC_ALPHA;
     rt.BlendOp=rt.BlendOpAlpha=D3D11_BLEND_OP_ADD;rt.RenderTargetWriteMask=15;if(FAILED(device->CreateBlendState(&bd,&blend)))return false;
-    context1->SwapDeviceContextState(state.Get(),&previous);auto r=view.Get();context->OMSetRenderTargets(1,&r,nullptr);context->OMSetBlendState(blend.Get(),nullptr,0xffffffff);
-    D3D11_VIEWPORT vp{0,0,16,12,0,1};context->RSSetViewports(1,&vp);context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ComPtr<ID3D11RenderTargetView> hudView;
+    if(hudRenderTexture && FAILED(device->CreateRenderTargetView(hudRenderTexture,&rd,&hudView)))return false;
+    context1->SwapDeviceContextState(state.Get(),&previous);auto r=hudView?hudView.Get():view.Get();context->OMSetRenderTargets(1,&r,nullptr);context->OMSetBlendState(blend.Get(),nullptr,0xffffffff);
+    // The top-left HUD rectangle is the bottom-left one in bottom-up RenderTexture rows.
+    D3D11_VIEWPORT vp{0,hudView?static_cast<float>(height-12):0.f,16,12,0,1};context->RSSetViewports(1,&vp);context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context->VSSetShader(vs.Get(),nullptr,0);context->PSSetShader(ps.Get(),nullptr,0);
     auto start=reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_FrameGenerationGetBeforeHudEvent());start(-frame,nullptr);start(frame,nullptr);
     context->Draw(3,0);auto end=reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_FrameGenerationGetAfterHudEvent());end(frame,nullptr);
+    if(hudView){
+        // Simulated final blit of the HUD into the producer's top-down rows.
+        r=view.Get();context->OMSetRenderTargets(1,&r,nullptr);D3D11_VIEWPORT top{0,0,16,12,0,1};context->RSSetViewports(1,&top);context->Draw(3,0);
+    }
     context1->SwapDeviceContextState(previous.Get(),nullptr);return true;
 }
 static ComPtr<ID3D11Texture2D> Texture(ID3D11Device* device, DXGI_FORMAT format, UINT bind=D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_RENDER_TARGET,
@@ -588,6 +599,7 @@ int main(int argc,char** argv) {
     for(int i=1;i<argc;++i)uiRecomposition|=!std::strcmp(argv[i],"--ui-recomposition");
     for(int i=1;i<argc;++i)fsr|=!std::strcmp(argv[i],"--fsr");
     for(int i=1;i<argc;++i)fsrUpscaler|=!std::strcmp(argv[i],"--fsr-upscaler");
+    bool hudRenderTextureMode=false;for(int i=1;i<argc;++i)hudRenderTextureMode|=!std::strcmp(argv[i],"--hud-render-texture");
     if(fsrUpscaler && RiskOfRainUpscaling_SetUpscalerBackend(2))return 148;
     int requestedMultiplier=2,presentsAt32=0,maxSdkFrames=0;
     const int liveMultipliers[]{2,3,4,5,6,5,3,2};
@@ -613,6 +625,12 @@ int main(int argc,char** argv) {
     }
     ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> immediate;
     if(FAILED(D3D11CreateDevice(nullptr,hardware?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,nullptr,&immediate)))return 1;
+    ComPtr<ID3D11Texture2D> hudRenderTextureOwner;
+    if(hudRenderTextureMode){
+        if(!fg)return 151;
+        hudRenderTextureOwner=Texture(device.Get(),DXGI_FORMAT_R8G8B8A8_UNORM);if(!hudRenderTextureOwner)return 151;
+        hudRenderTexture=hudRenderTextureOwner.Get();
+    }
     HWND window=nullptr;
     ComPtr<IDXGIFactory2> factory;
     ComPtr<IDXGISwapChain1> chain;
@@ -741,10 +759,23 @@ int main(int argc,char** argv) {
                 ComPtr<ID3D11Texture2D> producer;if(FAILED(chain->GetBuffer(0,IID_PPV_ARGS(&producer))))return 64;
                 immediate->UpdateSubresource(producer.Get(),0,nullptr,bridgeImage.data(),width*4,0);
             }
+            if(fg && hudRenderTexture){
+                // The pre-HUD scene in the RenderTexture's bottom-up rows; the producer keeps top-down rows.
+                std::vector<unsigned char> bottomUp(bridgeImage.size());const size_t row=size_t(width)*4;
+                for(int y=0;y<height;++y)std::memcpy(bottomUp.data()+y*row,bridgeImage.data()+(height-1-y)*row,row);
+                immediate->UpdateSubresource(hudRenderTexture,0,nullptr,bottomUp.data(),width*4,0);
+            }
             if(fg && uiRecomposition){
                 if(!DrawUiFixture(device.Get(),immediate.Get(),chain.Get(),i))return 142;
             }else if(fg){
-                auto event=reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_FrameGenerationGetBeforeHudEvent());event(-i,nullptr);event(i,nullptr);
+                auto event=reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_FrameGenerationGetBeforeHudEvent());
+                ComPtr<ID3D11RenderTargetView> hudView;
+                if(hudRenderTexture){
+                    if(FAILED(device->CreateRenderTargetView(hudRenderTexture,nullptr,&hudView)))return 150;
+                    auto bound=hudView.Get();immediate->OMSetRenderTargets(1,&bound,nullptr);
+                }
+                event(-i,nullptr);event(i,nullptr);
+                if(hudView)immediate->OMSetRenderTargets(1,&target,dsv.Get());
                 // Draw a synthetic HUD after the snapshot. It must not leak into the tagged color.
                 ComPtr<ID3D11Texture2D> producer;if(FAILED(chain->GetBuffer(0,IID_PPV_ARGS(&producer))))return 80;
                 std::vector<unsigned char> hud(16*12*4,255);D3D11_BOX box{0,0,0,16,12,1};
