@@ -600,6 +600,9 @@ int main(int argc,char** argv) {
     for(int i=1;i<argc;++i)fsr|=!std::strcmp(argv[i],"--fsr");
     for(int i=1;i<argc;++i)fsrUpscaler|=!std::strcmp(argv[i],"--fsr-upscaler");
     bool hudRenderTextureMode=false;for(int i=1;i<argc;++i)hudRenderTextureMode|=!std::strcmp(argv[i],"--hud-render-texture");
+    // --hud-hdr-target: the HUD draws onto an RGBA16F target, which the bridge cannot
+    // snapshot; FG must continue without a HUD-less image instead of a stale one.
+    bool hudHdrTarget=false;for(int i=1;i<argc;++i)hudHdrTarget|=!std::strcmp(argv[i],"--hud-hdr-target");
     if(fsrUpscaler && RiskOfRainUpscaling_SetUpscalerBackend(2))return 148;
     int requestedMultiplier=2,presentsAt32=0,maxSdkFrames=0;
     const int liveMultipliers[]{2,3,4,5,6,5,3,2};
@@ -625,7 +628,11 @@ int main(int argc,char** argv) {
     }
     ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> immediate;
     if(FAILED(D3D11CreateDevice(nullptr,hardware?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,nullptr,&immediate)))return 1;
-    ComPtr<ID3D11Texture2D> hudRenderTextureOwner;
+    ComPtr<ID3D11Texture2D> hudRenderTextureOwner,hudHdrOwner;
+    if(hudHdrTarget){
+        if(!fg || hudRenderTextureMode || uiRecomposition)return 152;
+        hudHdrOwner=Texture(device.Get(),DXGI_FORMAT_R16G16B16A16_FLOAT);if(!hudHdrOwner)return 152;
+    }
     if(hudRenderTextureMode){
         if(!fg)return 151;
         hudRenderTextureOwner=Texture(device.Get(),DXGI_FORMAT_R8G8B8A8_UNORM);if(!hudRenderTextureOwner)return 151;
@@ -769,13 +776,19 @@ int main(int argc,char** argv) {
                 if(!DrawUiFixture(device.Get(),immediate.Get(),chain.Get(),i))return 142;
             }else if(fg){
                 auto event=reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_FrameGenerationGetBeforeHudEvent());
+                // As in Unity, the target bound at the HUD event is what the HUD draws onto:
+                // the producer by default, or the RenderTexture/HDR target of the mode.
+                ComPtr<ID3D11Texture2D> hudTarget;
+                if(hudRenderTexture)hudTarget=hudRenderTexture;
+                else if(hudHdrOwner)hudTarget=hudHdrOwner;
+                else if(FAILED(chain->GetBuffer(0,IID_PPV_ARGS(&hudTarget))))return 150;
+                D3D11_RENDER_TARGET_VIEW_DESC hudDesc{};hudDesc.ViewDimension=D3D11_RTV_DIMENSION_TEXTURE2D;
+                hudDesc.Format=hudHdrOwner?DXGI_FORMAT_R16G16B16A16_FLOAT:DXGI_FORMAT_R8G8B8A8_UNORM;
                 ComPtr<ID3D11RenderTargetView> hudView;
-                if(hudRenderTexture){
-                    if(FAILED(device->CreateRenderTargetView(hudRenderTexture,nullptr,&hudView)))return 150;
-                    auto bound=hudView.Get();immediate->OMSetRenderTargets(1,&bound,nullptr);
-                }
+                if(FAILED(device->CreateRenderTargetView(hudTarget.Get(),&hudDesc,&hudView)))return 150;
+                auto bound=hudView.Get();immediate->OMSetRenderTargets(1,&bound,nullptr);
                 event(-i,nullptr);event(i,nullptr);
-                if(hudView)immediate->OMSetRenderTargets(1,&target,dsv.Get());
+                immediate->OMSetRenderTargets(1,&target,dsv.Get());hudView.Reset();
                 // Draw a synthetic HUD after the snapshot. It must not leak into the tagged color.
                 ComPtr<ID3D11Texture2D> producer;if(FAILED(chain->GetBuffer(0,IID_PPV_ARGS(&producer))))return 80;
                 std::vector<unsigned char> hud(16*12*4,255);D3D11_BOX box{0,0,0,16,12,1};
@@ -805,7 +818,7 @@ int main(int argc,char** argv) {
                     printf("FG_MULTIPLIER_MEASURED requested=%dx effective=%dx baseFrames=32 SDK presents=%d\n",requestedMultiplier,multiplier,actual);
                 }
             }
-            if(fg && (i==4 || i==64)){
+            if(fg && !hudHdrTarget && (i==4 || i==64)){
                 std::vector<unsigned char> readback(width*height*4);
                 if(FAILED(FrameBridgeInputReadback(chain.Get(),3,readback.data(),static_cast<unsigned>(readback.size()))) || readback!=bridgeImage)return 81;
                 std::vector<float> readDepth(width*height);

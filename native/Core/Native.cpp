@@ -31,6 +31,8 @@ static void WriteLog(ModLogLevel severity, const char* format, va_list args)
     FlushFileBuffers(logFile);
 }
 
+bool LogEnabled(ModLogLevel severity) { return ShouldLog(loggingLevel.load(), severity); }
+
 void Log(const char* format, ...)
 {
     va_list args; va_start(args, format);

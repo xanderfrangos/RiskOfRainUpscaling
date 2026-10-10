@@ -11,6 +11,8 @@
 template<class T> using ComPtr = Microsoft::WRL::ComPtr<T>;
 __declspec(dllexport) void Log(const char* format, ...);
 __declspec(dllexport) void Log(ModLogLevel severity, const char* format, ...);
+// Whether messages at this severity are currently written (gates costly diagnostics).
+bool LogEnabled(ModLogLevel severity);
 bool VerifyNvidiaSignature(const wchar_t* path);
 // NVIDIA SDKs are loaded only on adapters with this PCI vendor ID.
 constexpr UINT NvidiaVendorId = 0x10DE;

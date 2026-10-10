@@ -150,7 +150,8 @@ public:
         config.frameGenerationEnabled=true;config.allowAsyncWorkloads=false;
         // With a UI layer the backbuffer is already HUD-less. Otherwise FSR detects
         // the HUD by comparing the HUD-less snapshot with the final frame.
-        if(!uiRegistered)config.HUDLessColor=Common(request.hudless);
+        // Null when the HUD drew onto an unsupported target: interpolate the final image.
+        if(!uiRegistered && request.hudless)config.HUDLessColor=Common(request.hudless);
         config.generationRect={0,0,static_cast<int32_t>(desc.Width),static_cast<int32_t>(desc.Height)};config.frameID=frame;
         enabled=true; // Attempt Off even if an On call partially fails.
         RequireFfx(ffx->configure(&context,&config.header),"FSR frame generation configure");

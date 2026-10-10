@@ -7,7 +7,7 @@
 // Depth/motion are render-sized; HUD-less color and UI alpha are display-sized.
 struct FrameGenerationRequest {
     const CameraFrame& packet;
-    ID3D12Resource *depth, *motion, *hudless;
+    ID3D12Resource *depth, *motion, *hudless; // hudless is null when the HUD drew onto an unsupported target.
     ID3D12Resource* uiAlpha;   // Null: ordinary HUD-less generation. Cleared when the backend rejects it.
     bool uiRejected;           // Set when the backend rejected UI recomposition
     const DXGI_SWAP_CHAIN_DESC1& desc;

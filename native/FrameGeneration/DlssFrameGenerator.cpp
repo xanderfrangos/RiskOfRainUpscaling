@@ -210,7 +210,7 @@ public:
         sl::Resource u{sl::ResourceType::eTex2d,request.uiAlpha,nullptr,nullptr,D3D12_RESOURCE_STATE_COMMON};
         sl::ResourceTag tags[]{{&d,sl::kBufferTypeDepth,sl::ResourceLifecycle::eValidUntilPresent,&render},
             {&m,sl::kBufferTypeMotionVectors,sl::ResourceLifecycle::eValidUntilPresent,&render},
-            {&h,sl::kBufferTypeHUDLessColor,sl::ResourceLifecycle::eValidUntilPresent,&extent},
+            {request.hudless?&h:nullptr,sl::kBufferTypeHUDLessColor,sl::ResourceLifecycle::eValidUntilPresent,&extent}, // Null: no HUD-less image this frame.
             {request.uiAlpha?&u:nullptr,sl::kBufferTypeUIAlpha,sl::ResourceLifecycle::eValidUntilPresent,&extent},
             {nullptr,sl::kBufferTypeBackbuffer,sl::ResourceLifecycle::eValidUntilPresent,&extent}};
         auto tagResult=tag(*current,viewport,tags,5,nullptr);

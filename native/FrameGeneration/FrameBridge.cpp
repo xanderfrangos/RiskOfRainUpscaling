@@ -310,9 +310,10 @@ struct BridgeGpu {
             coverageSamples=0;coverageSum=coverageMax=0;
         }
     }
-    // Once per session, when the mask first covers the screen: the final image, the
-    // HUD-less snapshot and their per-pixel differences, to identify what changes
-    // pixels outside the HUD. Synchronous readback; diagnostics only.
+    // At Debug logging, once per session when the mask first covers the screen: the
+    // final image, the HUD-less snapshot and their per-pixel differences, to identify
+    // what changes pixels outside the HUD. Synchronous readback and ~44 MB of files
+    // on the render thread, so never at the default logging level.
     void DumpCoverage(BridgeSlot& slot){
         coverageDumped=true;
         D3D11_TEXTURE2D_DESC d{};slot.shared11->GetDesc(&d);
@@ -390,7 +391,7 @@ struct BridgeGpu {
         context11->SwapDeviceContextState(previous.Get(),nullptr);
     }
     void ComposeUi(BridgeSlot& slot,ID3D11Texture2D* hudOpacity){
-        if(layerCovering && !coverageDumped)DumpCoverage(slot);
+        if(layerCovering && !coverageDumped && LogEnabled(ModLogLevel::Debug))DumpCoverage(slot);
         LayerShaders();
         if(!hudlessView)RequireBridge(device11->CreateShaderResourceView(hudless.Get(),nullptr,&hudlessView),"UI layer HUD-less view");
         if(!slot.finalView)RequireBridge(device11->CreateShaderResourceView(slot.shared11.Get(),nullptr,&slot.finalView),"UI layer final view");
@@ -484,6 +485,8 @@ class FrameBridge final : public IDXGISwapChain2 {
     int beforeHudFrame=0,lastFgFrame=0;
     int displayFrame=0;
     const void* hudlessSource=nullptr; // Logging only; never dereferenced.
+    std::string hudlessRejected;      // Logging only.
+    bool hudlessExact=false;          // This frame's HUD-less snapshot is what the HUD drew onto.
     const char* uiFallbackReason=nullptr;
     ~FrameBridge(){
         {std::lock_guard<std::mutex> guard(gameplayBridgeMutex);if(gameplayBridge==this)gameplayBridge=nullptr;}
@@ -526,10 +529,10 @@ class FrameBridge final : public IDXGISwapChain2 {
             {ProfileCpuScope p(PROFILE_LABEL("fg.bridge wait for FG input release (CPU)"));gpu->WaitFg(slot);} // D3D11 is a non-presenting queue: wait on SL's explicit input fence.
             bool inputs=gpu->fg && FrameGenerationWanted() && frameDepth && frameMotion && packet.frame==beforeHudFrame;
             // FSR interpolates the HUD-less image and composites the HUD from a separate layer.
-            bool layered=inputs && !gpu->layerUnavailable && FrameGenerationLayersUi();
+            bool layered=inputs && hudlessExact && !gpu->layerUnavailable && FrameGenerationLayersUi();
             // A missing HUD completion must never publish a stale alpha texture.
             auto hudOpacity=gpu->opacity && !gpu->opacityUnavailable?gpu->opacity->Texture():nullptr;
-            bool ui=inputs && !layered && hudOpacity;
+            bool ui=inputs && hudlessExact && !layered && hudOpacity;
             slot.uiCopied=false;
             D3D11_TEXTURE2D_DESC render{};if(inputs)frameDepth->GetDesc(&render);
             ProfilerBegin(PROFILE_LABEL("fg.bridge D3D11 copies (final image + FG inputs + UI layer)"));
@@ -601,7 +604,7 @@ class FrameBridge final : public IDXGISwapChain2 {
             bool generating=false;
             {
                 ProfileCpuScope p(PROFILE_LABEL("fg.prepare: SDK tags/constants (CPU)"));
-                generating=inputs && FrameGenerationPrepare(packet,slot.depthTag12.Get(),slot.motionTag12.Get(),slot.hudlessTag12.Get(),ui?slot.uiTag12.Get():nullptr,gpu->desc,interval,render.Width,render.Height);
+                generating=inputs && FrameGenerationPrepare(packet,slot.depthTag12.Get(),slot.motionTag12.Get(),hudlessExact?slot.hudlessTag12.Get():nullptr,ui?slot.uiTag12.Get():nullptr,gpu->desc,interval,render.Width,render.Height);
             }
             if(gpu->opacity)gpu->opacity->Cancel();
             if(!generating && gpu->fg){FrameGenerationOff("Off, missing scene/HUD frame, or unsupported present");FrameGenerationClearTags(lastFgFrame,gpu->desc.Width,gpu->desc.Height);}
@@ -632,7 +635,7 @@ class FrameBridge final : public IDXGISwapChain2 {
                         Log("FRAME_GEN_PRESENT unityFrame=%d requested=%d status=0x%x sdkFrames=%u cumulativeSdkFrames=%d inputFence=%p value=%llu",fgFrame,generating,state.status,state.frames,RiskOfRainUpscaling_FrameGenerationPresentedFrames(),state.inputsFence,state.inputsValue);
                 }else if(generating){gpu->unknownFgCompletion=true;throw std::runtime_error("FG completion query failed");}
             }
-            packet={};frameDepth.Reset();frameMotion.Reset();beforeHudFrame=0; // Never reuse a gameplay packet in menus or on a second Present.
+            packet={};frameDepth.Reset();frameMotion.Reset();beforeHudFrame=0;hudlessExact=false; // Never reuse a gameplay packet in menus or on a second Present.
             displayFrame=0;
             RequireBridge(gpu->queue->Signal(gpu->consumed12.Get(),value),"D3D12 slot-retirement signal");slot.done=value;gpu->lastIndex=index;gpu->hasImage=true;
             if(result==DXGI_ERROR_DEVICE_REMOVED || result==DXGI_ERROR_DEVICE_RESET || result==DXGI_ERROR_DEVICE_HUNG){
@@ -688,14 +691,20 @@ public:
     // The HUD camera has an image effect, so Unity can draw it into an intermediate
     // instead of the producer; lower-resolution DLSS composes the world there. The
     // render target bound at the HUD's BeforeForwardOpaque event is exactly what
-    // the HUD draws onto. Use it when it is a display-sized RGBA8 surface.
-    ID3D11Texture2D* HudTarget(ComPtr<ID3D11Texture2D>& bound){
+    // the HUD draws onto. Use it when it is a display-sized RGBA8 surface. Otherwise
+    // returns null and describes the target: the producer then still holds the
+    // previous frame, which must never stand in for this frame's HUD-less image.
+    ID3D11Texture2D* HudTarget(ComPtr<ID3D11Texture2D>& bound,std::string& rejected){
         ComPtr<ID3D11RenderTargetView> view;gpu->context11->OMGetRenderTargets(1,&view,nullptr);
         ComPtr<ID3D11Resource> resource;if(view)view->GetResource(&resource);
-        if(!resource || FAILED(resource.As(&bound)))return gpu->producer.Get();
+        if(!resource || FAILED(resource.As(&bound))){rejected="no 2D render target bound";return nullptr;}
+        if(bound.Get()==gpu->producer.Get())return bound.Get();
         D3D11_TEXTURE2D_DESC d{};bound->GetDesc(&d);
         bool rgba8=d.Format==DXGI_FORMAT_R8G8B8A8_TYPELESS || d.Format==DXGI_FORMAT_R8G8B8A8_UNORM || d.Format==DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-        if(!rgba8 || d.Width!=gpu->desc.Width || d.Height!=gpu->desc.Height || d.SampleDesc.Count!=1 || d.ArraySize!=1 || d.MipLevels!=1)return gpu->producer.Get();
+        if(!rgba8 || d.Width!=gpu->desc.Width || d.Height!=gpu->desc.Height || d.SampleDesc.Count!=1 || d.ArraySize!=1 || d.MipLevels!=1){
+            char text[160];sprintf_s(text,"format=%u size=%ux%u samples=%u arraySize=%u mips=%u",d.Format,d.Width,d.Height,d.SampleDesc.Count,d.ArraySize,d.MipLevels);
+            rejected=text;return nullptr;
+        }
         return bound.Get();
     }
     void BeforeHud(int frame,bool captureUi){
@@ -704,16 +713,19 @@ public:
         captureUi=captureUi && FrameGenerationUIAvailable();
         if(!displayFrame)displayFrame=frame;
         if(failed || !gpu->fg || !FrameGenerationWanted() || !frameDepth || packet.frame!=frame)return;
-        ComPtr<ID3D11Texture2D> bound;auto source=HudTarget(bound);
+        ComPtr<ID3D11Texture2D> bound;std::string rejected;auto source=HudTarget(bound,rejected);
         // Only the swap-chain producer has top-down rows; Unity RenderTextures are bottom-up on D3D.
         const bool bottomUp=source!=gpu->producer.Get();
-        if(source!=hudlessSource){
-            hudlessSource=source;
-            Log("FRAME_GEN_HUDLESS_SOURCE unityFrame=%d source=%p producer=%p kind=%s",frame,source,gpu->producer.Get(),bottomUp?"bound HUD target (RenderTexture rows flipped to swap-chain order)":"producer");
+        if(source!=hudlessSource || rejected!=hudlessRejected){
+            hudlessSource=source;hudlessRejected=rejected;
+            if(source)Log("FRAME_GEN_HUDLESS_SOURCE unityFrame=%d source=%p producer=%p kind=%s",frame,source,gpu->producer.Get(),bottomUp?"bound HUD target (RenderTexture rows flipped to swap-chain order)":"producer");
+            else Log(ModLogLevel::Warning,"FRAME_GEN_HUDLESS_SOURCE unityFrame=%d kind=unsupported HUD target (%s); no HUD-less input or UI layer: generated frames interpolate the HUD",frame,rejected.c_str());
         }
+        hudlessExact=false;beforeHudFrame=frame;
+        if(!source)return; // FG still runs from the final image; no HUD opacity capture.
         try {ProfileScope p(PROFILE_LABEL("fg.hudless copy (display-sized)"));gpu->SnapshotHudless(source,bottomUp);}
-        catch(const std::exception& e){Log(ModLogLevel::Warning,"FRAME_GEN_HUDLESS_FAILED %s; Frame Generation skips this frame",e.what());return;}
-        beforeHudFrame=frame;
+        catch(const std::exception& e){Log(ModLogLevel::Warning,"FRAME_GEN_HUDLESS_FAILED %s; Frame Generation skips this frame",e.what());beforeHudFrame=0;return;}
+        hudlessExact=true;
         if(captureUi && !gpu->opacity && !gpu->opacityUnavailable){
             try {gpu->opacity=std::make_unique<HudOpacity>(gpu->device11.Get(),gpu->context11.Get(),gpu->desc.Width,gpu->desc.Height);}
             catch(const std::exception& e){gpu->opacityUnavailable=true;Log(ModLogLevel::Warning, "FRAME_GEN_UI_FALLBACK %s; ordinary HUDless FG retained",e.what());}
@@ -786,7 +798,7 @@ public:
             gpu->producer->AddRef();held=gpu->producer->Release();
             if(held>1 || gpu->views->Count()>2)return DXGI_ERROR_INVALID_CALL;
             gpu->ReleaseBuffers();
-            packet={};frameDepth.Reset();frameMotion.Reset();beforeHudFrame=0;
+            packet={};frameDepth.Reset();frameMotion.Reset();beforeHudFrame=0;hudlessExact=false;
             HRESULT result=gpu->display->ResizeBuffers(count,width,height,format,flags);
             gpu->Buffers(); // Rebuild at the actual old/new size, even if DXGI rejected the resize.
             Log("FRAME_BRIDGE_RESIZED size=%ux%u count=%u flags=0x%x HRESULT=0x%08lx",gpu->desc.Width,gpu->desc.Height,gpu->desc.BufferCount,gpu->desc.Flags,result);

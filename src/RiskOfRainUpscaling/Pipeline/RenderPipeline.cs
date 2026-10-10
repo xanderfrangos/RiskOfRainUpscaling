@@ -362,16 +362,54 @@ namespace RiskOfRainUpscaling
             foreach(var effect in camera.GetComponents<MonoBehaviour>().Where(c=>c && c.isActiveAndEnabled)) {
                 var type=effect.GetType();
                 if(type.GetMethod("OnRenderImage",flags)==null)continue;
-                // DamageIndicator's zero-intensity branch resets its indicators
-                // and blits unchanged color. A nonzero intensity or an unknown
-                // image effect cannot safely share our pre-effect HUD opacity.
-                if(type.FullName!="RoR2.PostProcessing.DamageIndicator")return "HUD image effect " + type.FullName;
-                var intensity=type.GetField("_indicatorValue",flags);
-                if(intensity==null || !(intensity.GetValue(effect) is float value) || !Mathf.Approximately(value,0))return "nonzero DamageIndicator";
+                // DamageIndicator blits unchanged color while it shows no indicator.
+                // A visible indicator or an unknown image effect cannot safely share
+                // our pre-effect HUD opacity.
+                if(!(effect is RoR2.PostProcessing.DamageIndicator damage))return "HUD image effect " + type.FullName;
+                if(DamageIndicatorDraws(damage))return "visible DamageIndicator";
             }
-            // Screen-space overlay canvases render outside this camera's pass.
-            foreach(var canvas in UnityEngine.Object.FindObjectsOfType<Canvas>())
-                if(canvas.isActiveAndEnabled && canvas.renderMode==RenderMode.ScreenSpaceOverlay && canvas.targetDisplay==camera.targetDisplay)return "screen-space overlay canvas " + canvas.name;
+            // Screen-space overlay canvases render outside this camera's pass. One whose
+            // graphics are all fully transparent (RoR2's hidden MemoryWarningHUD, an idle
+            // ScreenTintCanvas) leaves every pixel unchanged.
+            foreach(var canvas in UnityEngine.Object.FindObjectsOfType<Canvas>()){
+                if(!canvas.isActiveAndEnabled || canvas.renderMode!=RenderMode.ScreenSpaceOverlay || canvas.targetDisplay!=camera.targetDisplay)continue;
+                var drawing=VisibleGraphic(canvas);
+                if(drawing!=null)return "screen-space overlay canvas " + canvas.name + " (" + drawing + ")";
+            }
+            return null;
+        }
+        private static System.Reflection.FieldInfo damageScale,damageTimestamps,damageTimestampActive;
+        // _indicatorValue becomes the player's indicator scale on the first hit and is
+        // never reset, so it does not mean an indicator is shown. An indicator draws
+        // while its hit is active (this frame's effect updates its opacity) or while its
+        // opacity can still change an 8-bit pixel. Missing fields count as drawing.
+        private static bool DamageIndicatorDraws(RoR2.PostProcessing.DamageIndicator damage)
+        {
+            const System.Reflection.BindingFlags flags=System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var type=typeof(RoR2.PostProcessing.DamageIndicator);
+            if(damageScale==null)damageScale=type.GetField("_indicatorValue",flags);
+            if(damageScale==null || !(damageScale.GetValue(damage) is float scale))return true;
+            if(Mathf.Approximately(scale,0))return false; // This branch resets the indicators.
+            if(damage.indicators==null)return true;
+            foreach(var indicator in damage.indicators)if(indicator.z>.5f/255)return true;
+            if(damageTimestamps==null)damageTimestamps=type.GetField("_indicatorTimestamps",flags);
+            if(!(damageTimestamps?.GetValue(damage) is Array timestamps))return true;
+            if(damageTimestampActive==null)damageTimestampActive=timestamps.GetType().GetElementType()?.GetField("isActive",System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
+            if(damageTimestampActive==null)return true;
+            foreach(var timestamp in timestamps)if(!(damageTimestampActive.GetValue(timestamp) is bool hitActive) || hitActive)return true;
+            return false;
+        }
+        private readonly List<UnityEngine.UI.Graphic> overlayGraphics=new List<UnityEngine.UI.Graphic>();
+        // The first graphic that can change pixels on an overlay canvas, or null: enabled,
+        // unculled, with nonzero color x renderer x CanvasGroup alpha.
+        private string VisibleGraphic(Canvas canvas)
+        {
+            canvas.GetComponentsInChildren(false,overlayGraphics);
+            foreach(var graphic in overlayGraphics){
+                if(!graphic.isActiveAndEnabled || graphic.canvasRenderer.cull)continue;
+                float alpha=graphic.color.a*graphic.canvasRenderer.GetAlpha()*graphic.canvasRenderer.GetInheritedAlpha();
+                if(alpha>0)return "visible graphic " + graphic.name; // Name only: the reason is logged when it changes.
+            }
             return null;
         }
         private string hudOpacityReason="";
