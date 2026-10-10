@@ -1,0 +1,16 @@
+<Project>
+  <PropertyGroup>
+    <!-- The mod version: assembly/file versions, Plugin.Version and the Thunderstore manifest all come from here. -->
+    <Version>1.0.1</Version>
+    <Authors>Xander Frangos</Authors>
+    <Company>$(Authors)</Company>
+    <!-- Build.ps1 finds the game and passes GamePath; this default only serves direct dotnet builds. -->
+    <GamePath Condition="'$(GamePath)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Risk of Rain 2</GamePath>
+    <GameManaged>$(GamePath)\Risk of Rain 2_Data\Managed</GameManaged>
+    <ProfileCore Condition="'$(ProfileCore)' == ''">$(MSBuildThisFileDirectory)build\references\BepInEx</ProfileCore>
+    <RiskOfOptionsPath Condition="'$(RiskOfOptionsPath)' == ''">$(MSBuildThisFileDirectory)build\references\RiskOfOptions.dll</RiskOfOptionsPath>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,8 @@
+# Optional: copy to Build.local.psd1 and set only the paths you need to override.
+# Command-line parameters take priority. Paths must be absolute.
+@{
+    # GamePath = 'D:\SteamLibrary\steamapps\common\Risk of Rain 2'
+    # ProfilePath = 'C:\Users\you\AppData\Roaming\r2modmanPlus-local\RiskOfRain2\profiles\My profile'
+    # VisualStudioPath = 'C:\Program Files\Microsoft Visual Studio\2022\Community'
+    # RiskOfOptionsPath = 'D:\References\RiskOfOptions.dll'
+}

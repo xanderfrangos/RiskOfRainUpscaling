@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>netstandard2.1</TargetFramework><AssemblyName>RiskOfRainUpscaling.Preloader</AssemblyName></PropertyGroup>
+  <ItemGroup>
+    <Reference Include="BepInEx"><HintPath>$(ProfileCore)\BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Mono.Cecil"><HintPath>$(ProfileCore)\Mono.Cecil.dll</HintPath><Private>false</Private></Reference>
+    <Compile Include="../Shared/NativeApi.cs" Link="NativeApi.cs" />
+    <Compile Include="../Shared/PackagePaths.cs" Link="PackagePaths.cs" />
+    <Compile Include="../Shared/FrameGenerationSetting.cs" Link="FrameGenerationSetting.cs" />
+    <Compile Include="../Shared/LoggingSettings.cs" Link="LoggingSettings.cs" />
+  </ItemGroup>
+</Project>

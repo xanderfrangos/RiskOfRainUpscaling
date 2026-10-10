@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>netstandard2.1</TargetFramework><AssemblyName>RiskOfRainUpscaling</AssemblyName></PropertyGroup>
+  <!-- BepInPlugin needs a compile-time constant, so Plugin.Version is generated from $(Version) in Directory.Build.props. -->
+  <Target Name="GeneratePluginVersion" BeforeTargets="CoreCompile">
+    <PropertyGroup><PluginVersionFile>$(IntermediateOutputPath)Plugin.Version.g.cs</PluginVersionFile></PropertyGroup>
+    <WriteLinesToFile File="$(PluginVersionFile)" Lines="namespace RiskOfRainUpscaling { public sealed partial class Plugin { internal const string Version = &quot;$(Version)&quot;%3B } }" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup><Compile Include="$(PluginVersionFile)" /><FileWrites Include="$(PluginVersionFile)" /></ItemGroup>
+  </Target>
+  <ItemGroup>
+    <Reference Include="RiskOfOptions"><HintPath>$(RiskOfOptionsPath)</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(GameManaged)\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(ProfileCore)\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.ParticleSystemModule"><HintPath>$(GameManaged)\UnityEngine.ParticleSystemModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.Postprocessing.Runtime"><HintPath>$(GameManaged)\Unity.Postprocessing.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx"><HintPath>$(ProfileCore)\BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="RoR2"><HintPath>$(GameManaged)\RoR2.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="com.unity.multiplayer-hlapi.Runtime"><HintPath>$(GameManaged)\com.unity.multiplayer-hlapi.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(GameManaged)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameManaged)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(GameManaged)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(GameManaged)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UIModule"><HintPath>$(GameManaged)\UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(GameManaged)\UnityEngine.ImageConversionModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.JSONSerializeModule"><HintPath>$(GameManaged)\UnityEngine.JSONSerializeModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UnityWebRequestModule"><HintPath>$(GameManaged)\UnityEngine.UnityWebRequestModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UNETModule"><HintPath>$(GameManaged)\UnityEngine.UNETModule.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <ItemGroup><EmbeddedResource Include="Resources/icon-45.png" LogicalName="RiskOfRainUpscaling.icon-45.png" /></ItemGroup>
+  <ItemGroup><Compile Include="../Shared/NativeApi.cs" Link="NativeApi.cs" /><Compile Include="../Shared/PackagePaths.cs" Link="PackagePaths.cs" /><Compile Include="../Shared/FrameGenerationSetting.cs" Link="FrameGenerationSetting.cs" /><Compile Include="../Shared/LoggingSettings.cs" Link="LoggingSettings.cs" /></ItemGroup>
+</Project>
+

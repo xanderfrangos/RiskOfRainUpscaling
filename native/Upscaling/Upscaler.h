@@ -1,0 +1,56 @@
+#pragma once
+#include "Upscaling/UpscalerContext.h"
+#include <memory>
+#include <string>
+
+// Super-resolution backend (DLSS or FSR). Each upscaler context owns one
+// feature. Calls run on Unity's render thread with streamlineMutex held and
+// the context's private D3D11 state bound; failures throw.
+struct UpscalerOptions {
+    int quality;              // UpscalerDescription quality; 0 renders at 100%
+    UINT outputWidth, outputHeight;
+    bool hdr;                 // linear HDR scene color (before post-processing)
+    bool alpha;               // reconstruct the input alpha (temporal outlines)
+    int preset;               // sl::DLSSPreset value for every mode; 0 = NVIDIA's per-mode default (DLSS only)
+};
+// Render sizes accepted for a quality. A zero min/max reports only the optimal size.
+struct UpscalerSizes { UINT optimalWidth, optimalHeight, minWidth, minHeight, maxWidth, maxHeight; };
+struct UpscalerFrame {
+    int frame;
+    bool reset;
+    bool perceptual;          // color is sRGB-encoded (end-of-effects perceptual input)
+    const CameraFrame* camera;
+    // Render-sized RGBA16F color, R32F depth and RG16F current-to-previous UV motion.
+    ID3D11Texture2D *color, *depth, *motion;
+    ID3D11Texture2D* output; // Display-sized RGBA16F, unordered access
+    UINT renderWidth, renderHeight, outputWidth, outputHeight;
+};
+class UpscalerFeature {
+public:
+    virtual ~UpscalerFeature() = default;
+    virtual UpscalerSizes Sizes(const UpscalerOptions&) = 0;
+    // Clears options.alpha when the backend cannot reconstruct alpha.
+    virtual void Configure(UpscalerOptions&) = 0;
+    // Once per frame that will be evaluated, before its inputs are validated.
+    virtual void BeginFrame() = 0;
+    virtual void Evaluate(ID3D11DeviceContext*, const UpscalerFrame&) = 0;
+    // Releases the configured feature; never throws. Returns detail for the retirement log.
+    virtual std::string Release() = 0;
+    // Present calls serviced by the backend's presentation hooks (diagnostics).
+    virtual unsigned PresentedFrames() const = 0;
+    // Values match RiskOfRainUpscaling_UpscalerKind: 1 DLSS, 2 FSR.
+    virtual int Kind() const = 0;
+};
+// Values match [Upscaling] Upscaler and RiskOfRainUpscaling_SetUpscalerBackend.
+enum class UpscalerBackend { Auto, DLSS, FSR };
+// The preference captured by RiskOfRainUpscaling_UpscalerCreate for its context.
+UpscalerBackend RequestedUpscaler();
+// The DLSS preset captured by RiskOfRainUpscaling_UpscalerCreate for its context.
+int RequestedDlssPreset();
+// Null with a reason when no backend supports this device's adapter. Throws
+// when the selected backend fails to start; Auto falls back from DLSS to FSR.
+std::unique_ptr<UpscalerFeature> CreateUpscalerFeature(ID3D11Device*, UpscalerBackend, std::string& unavailable);
+std::unique_ptr<UpscalerFeature> CreateDlssFeature(ID3D11Device*);
+// True once DLSS started in this process; later DLSS failures stay latched until restart.
+bool DlssEverReady();
+std::unique_ptr<UpscalerFeature> CreateFsrFeature(ID3D11Device*);

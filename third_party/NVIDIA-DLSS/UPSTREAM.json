@@ -1,0 +1,22 @@
+{
+  "streamline": {
+    "repository": "https://github.com/NVIDIA-RTX/Streamline",
+    "version": "2.14.1",
+    "files": [
+      "sl.interposer.dll",
+      "sl.common.dll",
+      "sl.dlss.dll",
+      "sl.dlss_g.dll",
+      "sl.reflex.dll",
+      "sl.pcl.dll"
+    ]
+  },
+  "dlss": {
+    "repository": "https://github.com/NVIDIA/DLSS",
+    "version": "310.9.1",
+    "files": [
+      "nvngx_dlss.dll",
+      "nvngx_dlssg.dll"
+    ]
+  }
+}

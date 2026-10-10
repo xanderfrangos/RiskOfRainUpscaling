@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup><Compile Include="../../src/RiskOfRainUpscaling/Pipeline/CameraPolicy.cs" Link="CameraPolicy.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/RiskOfRainUpscaling/Upscaling/DlaaHistoryPolicy.cs" Link="DlaaHistoryPolicy.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/RiskOfRainUpscaling/FrameGeneration/ReflexLimiterController.cs" Link="ReflexLimiterController.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/RiskOfRainUpscaling/FrameGeneration/VSyncFrameLimiter.cs" Link="VSyncFrameLimiter.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/RiskOfRainUpscaling/Pipeline/WorldRoutingPolicy.cs" Link="WorldRoutingPolicy.cs" /><Compile Include="../../src/RiskOfRainUpscaling/Upscaling/DlssPolicy.cs" Link="DlssPolicy.cs" /><Compile Include="../../src/Shared/NativeApi.cs" Link="NativeApi.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/Shared/PackagePaths.cs" Link="PackagePaths.cs" /></ItemGroup>
+  <ItemGroup>
+    <Reference Include="BepInEx"><HintPath>$(ProfileCore)\BepInEx.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameManaged)\UnityEngine.CoreModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(GameManaged)\UnityEngine.dll</HintPath></Reference>
+    <Compile Include="../../src/RiskOfRainUpscaling/Settings/ModSettings.cs" Link="ModSettings.cs" />
+    <Compile Include="../../src/RiskOfRainUpscaling/Settings/GameFrameRateSetting.cs" Link="GameFrameRateSetting.cs" />
+    <Compile Include="../../src/Shared/FrameGenerationSetting.cs" Link="FrameGenerationSetting.cs" />
+    <Compile Include="../../src/Shared/LoggingSettings.cs" Link="LoggingSettings.cs" />
+  </ItemGroup>
+  <Target Name="PrepareBepInExTestCopy" AfterTargets="CopyFilesToOutputDirectory">
+    <Exec Command="pwsh -NoProfile -File &quot;$(MSBuildProjectDirectory)\Prepare-TestAssembly.ps1&quot; -TestOutput &quot;$(TargetDir).&quot; -CecilPath &quot;$(ProfileCore)\Mono.Cecil.dll&quot;" />
+  </Target>
+</Project>

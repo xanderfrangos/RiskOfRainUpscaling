@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/GPUOpen-Effects/FidelityFX-FSR",
+  "commit": "a21ffb8f6c13233ba336352bdff293894c706575",
+  "files": [
+    "ffx_a.h",
+    "ffx_fsr1.h",
+    "LICENSE.txt"
+  ]
+}
