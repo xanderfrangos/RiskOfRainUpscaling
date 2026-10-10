@@ -84,9 +84,19 @@ function Resolve-BuildProfilePath {
         }
     }
     # Read build references from an existing mod install first, then the newest usable profile.
-    $profile = $profiles | Sort-Object @{Expression={Test-Path -LiteralPath (Join-Path $_.FullName 'BepInEx\plugins\RiskOfRainUpscaling\RiskOfRainUpscaling.dll')};Descending=$true}, @{Expression='LastWriteTime';Descending=$true}, FullName | Select-Object -First 1
+    $profile = $profiles | Sort-Object @{Expression={Test-Path -LiteralPath (Join-Path $_.FullName (Get-BuildProfileRelativePath 'BepInEx\plugins\RiskOfRainUpscaling\RiskOfRainUpscaling.dll'))};Descending=$true}, @{Expression='LastWriteTime';Descending=$true}, FullName | Select-Object -First 1
     if ($profile) { return $profile.FullName }
     if (Test-BuildProfile $GamePath $NeedsOptions) { return $GamePath }
+}
+
+# r2modman installs a package's BepInEx\plugins and BepInEx\patchers contents under an Author-Package folder,
+# so package path BepInEx\plugins\RiskOfRainUpscaling\x is BepInEx\plugins\XanderChaos-RiskOfRainUpscaling\RiskOfRainUpscaling\x in a profile.
+$BuildProfileModFolder = 'XanderChaos-RiskOfRainUpscaling'
+
+function Get-BuildProfileRelativePath {
+    param([string]$PackageRelativePath)
+    if ($PackageRelativePath -notmatch '^BepInEx[\\/](plugins|patchers)[\\/](.+)$') { throw "Not a plugin or patcher path: $PackageRelativePath" }
+    return "BepInEx\$($Matches[1])\$BuildProfileModFolder\$($Matches[2])"
 }
 
 function Get-BuildRelativePath {

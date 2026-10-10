@@ -30,10 +30,11 @@ foreach ($file in $manifest.files) {
 $backupRoot = Join-Path $PSScriptRoot ('profile-backups\' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))
 foreach ($relative in 'BepInEx\plugins\RiskOfRainUpscaling','BepInEx\patchers\RiskOfRainUpscaling') {
     $sourceFolder = Join-Path $packageRoot $relative
-    $destination = [IO.Path]::GetFullPath((Join-Path $profileRoot $relative))
+    $profileRelative = Get-BuildProfileRelativePath $relative
+    $destination = [IO.Path]::GetFullPath((Join-Path $profileRoot $profileRelative))
     if (-not $destination.StartsWith($profileRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Destination escapes profile.' }
     if (Test-Path -LiteralPath $destination) {
-        $backup = Join-Path $backupRoot $relative
+        $backup = Join-Path $backupRoot $profileRelative
         New-Item -ItemType Directory -Path $backup -Force | Out-Null
         Copy-Item -LiteralPath $destination -Destination (Split-Path -Parent $backup) -Recurse -Force
     }
@@ -48,13 +49,13 @@ foreach ($relative in 'BepInEx\plugins\RiskOfRainUpscaling','BepInEx\patchers\Ri
 }
 $verified = 0
 foreach ($file in $manifest.files) {
-    $installed = Join-Path $profileRoot $file.path
+    $installed = Join-Path $profileRoot (Get-BuildProfileRelativePath $file.path)
     if ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -ne $file.sha256) { throw "Installed manifest mismatch: $installed" }
     ++$verified
 }
 if ($configBefore -and (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash -ne $configBefore) { throw 'Existing BepInEx configuration was changed.' }
 $receipt = Join-Path $PSScriptRoot ("profile-installation-" + $manifest.version.Replace('.','') + '.json')
-[ordered]@{version=$manifest.version;assembly=[Reflection.AssemblyName]::GetAssemblyName((Join-Path $profileRoot 'BepInEx\plugins\RiskOfRainUpscaling\RiskOfRainUpscaling.dll')).FullName;
+[ordered]@{version=$manifest.version;assembly=[Reflection.AssemblyName]::GetAssemblyName((Join-Path $profileRoot (Get-BuildProfileRelativePath 'BepInEx\plugins\RiskOfRainUpscaling\RiskOfRainUpscaling.dll'))).FullName;
     verifiedFiles=$verified;configSha256=$(if (Test-Path -LiteralPath $configPath) { (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash } else { $null });configBeforeSha256=$configBefore;
     backup=$backupRoot;profilePath=$profileRoot;installedUtc=[DateTime]::UtcNow.ToString('O')} |
     ConvertTo-Json | Set-Content -LiteralPath $receipt -Encoding utf8

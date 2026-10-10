@@ -23,7 +23,7 @@ foreach ($case in 'fresh','upgrade') {
     $otherPlugin = Join-Path $profile 'BepInEx\plugins\OtherAuthor-OtherMod\Other.dll'
     New-Item -ItemType Directory -Path (Split-Path -Parent $otherPlugin) -Force | Out-Null
     'other mod fixture' | Set-Content -LiteralPath $otherPlugin
-    $previousFile = Join-Path $profile 'BepInEx\plugins\RiskOfRainUpscaling\RiskOfRainUpscaling.dll'
+    $previousFile = Join-Path $profile 'BepInEx\plugins\XanderChaos-RiskOfRainUpscaling\RiskOfRainUpscaling\RiskOfRainUpscaling.dll'
     if ($case -eq 'upgrade') {
         New-Item -ItemType Directory -Path (Split-Path -Parent $previousFile) -Force | Out-Null
         'previous version fixture' | Set-Content -LiteralPath $previousFile
@@ -34,12 +34,14 @@ foreach ($case in 'fresh','upgrade') {
     @{version='1.0.0';files=@($files)} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $plugin 'dependency-manifest.json')
     & (Join-Path $root 'Install-Profile.ps1') -ProfilePath $profile | Out-Null
     foreach ($file in $files) {
-        if ((Get-FileHash -LiteralPath (Join-Path $profile $file.path) -Algorithm SHA256).Hash -ne $file.sha256) { throw "Installed file mismatch: $($file.path) ($case)" }
+        $installed = Join-Path $profile ($file.path -replace '^BepInEx\\(plugins|patchers)\\', 'BepInEx\$1\XanderChaos-RiskOfRainUpscaling\')
+        if ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -ne $file.sha256) { throw "Installed file mismatch: $($file.path) ($case)" }
     }
     $backups = @(Get-ChildItem -LiteralPath (Join-Path $root 'profile-backups') -Filter 'RiskOfRainUpscaling.dll' -Recurse -File -ErrorAction SilentlyContinue)
     if ($case -eq 'upgrade' -and ($backups.Count -ne 1 -or (Get-Content -LiteralPath $backups[0].FullName) -ne 'previous version fixture')) { throw 'Previous install was not backed up.' }
     if ($case -eq 'fresh' -and $backups.Count -ne 0) { throw 'Fresh install created a plugin backup.' }
     if (-not (Test-Path -LiteralPath $otherPlugin)) { throw "Another mod's plugin was removed: $case" }
+    if (Test-Path -LiteralPath (Join-Path $profile 'BepInEx\plugins\RiskOfRainUpscaling')) { throw "Installed beside the mod-manager folder: $case" }
     if ((Get-FileHash -LiteralPath $configPath).Hash -ne $configBefore) { throw "BepInEx config changed during install: $case" }
 }
 Write-Output 'PASS: profile install verifies installed hashes, backs up a previous install, and preserves the config and other mods.'

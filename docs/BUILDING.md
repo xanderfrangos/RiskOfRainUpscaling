@@ -31,7 +31,7 @@ Put `-NoPause` first for unattended builds.
 
 ## Install a build into a profile
 
-In PowerShell 7, run [build/Install-Profile.ps1](../build/Install-Profile.ps1). It uses the same profile discovery and `Build.local.psd1` settings as the build, or `-ProfilePath`. It verifies the package hashes, backs up the previous mod files, and preserves your existing config. Launch with the mod manager's **Start modded**.
+In PowerShell 7, run [build/Install-Profile.ps1](../build/Install-Profile.ps1). It uses the same profile discovery and `Build.local.psd1` settings as the build, or `-ProfilePath`. It installs into the mod manager's `XanderChaos-RiskOfRainUpscaling` folders under `plugins` and `patchers`, verifies the package hashes, backs up the previous mod files, and preserves your existing config. Launch with the mod manager's **Start modded**.
 
 ## Package layout
 
