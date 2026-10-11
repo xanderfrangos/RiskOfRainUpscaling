@@ -159,7 +159,9 @@ namespace RiskOfRainUpscaling
                 active.Width != width || active.Height != height ||
                 active.InputWidth != inputWidth || active.InputHeight != inputHeight || active.Low != low ||
                 (active.Session!=null)!=dlaa || (active.Session!=null && (active.Session.Quality!=dlss || active.Session.Upscaler!=upscaler.Value || active.Session.Preset!=preset.Value || (active.Session.Upscaled && active.Session.Outlines!=outlines.Value) || active.Session.BeforePostProcessing!=DlssPolicy.BeforePostProcessing(dlss,EffectivePlacement(rig.sceneCam,dlss)))) ||
-                active.Near != rig.sceneCam.nearClipPlane || active.Far != rig.sceneCam.farClipPlane)
+                // The upscaler reads the clip planes every frame; only the diagnostics
+                // context fixes them at creation (depth preview), so only it rebuilds.
+                (active.Diagnostics != IntPtr.Zero && (active.Near != rig.sceneCam.nearClipPlane || active.Far != rig.sceneCam.farClipPlane)))
             {
                 Detach("camera/resolution/configuration changed");
                 try { active = new PipelineResources(rig, width, height, inputWidth, inputHeight, low); Attach(dlss); }
@@ -167,6 +169,8 @@ namespace RiskOfRainUpscaling
                     upscalingSuspended = attachFailed = true;
                     Block("Attach failed: " + exception.Message + "; renderer restored and paused for this session, saved settings kept. Changing an upscaling setting or the Toggle Upscaling shortcut retries. See native.log."); return; }
             }
+            // Diagnostics created later in this session start from the current planes.
+            if (active.Diagnostics == IntPtr.Zero) { active.Near = rig.sceneCam.nearClipPlane; active.Far = rig.sceneCam.farClipPlane; }
             active.Scene.depthTextureMode |= DepthTextureMode.Depth | DepthTextureMode.MotionVectors;
             if ((active.Low || active.Session!=null) && !active.TailIsLast()) {
                 DisableLowerResolution();
