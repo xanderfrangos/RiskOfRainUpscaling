@@ -257,11 +257,15 @@ namespace RiskOfRainUpscaling
         {
             if(previousFrame!=0)log.Info("HISTORY_SUMMARY lastPreparedFrame="+previousFrame+" resets="+resetCount+" longestRun="+longestResetRun+
                 " retainedFovFrames="+fovHistoryFrames+" maxRetainedFovDeltaDegrees="+maxRetainedFovDelta.ToString("F6",CultureInfo.InvariantCulture));
-            if(layer && owners.TryGetValue(layer,out var owner) && owner==this) {
+            // A stage change destroys the camera before this runs. Destroyed keys still
+            // match by instance ID, so drop them too, or the static maps keep this session.
+            if(!ReferenceEquals(layer,null) && owners.TryGetValue(layer,out var owner) && owner==this) {
                 owners.Remove(layer);
                 // Rebuild without the redirect before Output/PostOutput are released.
-                if(Upscaled) layer.OnGlobalVolumesDirty();
+                if(Upscaled && layer) layer.OnGlobalVolumesDirty();
             }
+            // A live layer drops its redirect when PPv2 next rebuilds; a destroyed one never does.
+            if(!ReferenceEquals(layer,null) && !layer && redirected.TryGetValue(layer,out var post) && post==this) redirected.Remove(layer);
             Failure=null;preparedFrame=-1;
             RestoreProjection();
             if(changedAA && layer && layer.antialiasingMode==PostProcessLayer.Antialiasing.None) layer.antialiasingMode=oldAA;
