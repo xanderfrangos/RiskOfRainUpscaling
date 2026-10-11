@@ -11,16 +11,17 @@ $results = Join-Path $PSScriptRoot 'test-results'
 New-Item -ItemType Directory -Path $patcher,$plugin,$logs,$results,$configFolder -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'native-nmake\RiskOfRainUpscaling.Native.dll') -Destination $patcher -Force
 $testExe = Join-Path $fixtureRoot 'RiskOfRainUpscaling.StartupTests.exe'
-foreach ($mode in 'native','config-off','config-on','config-3x','config-4x','config-5x','config-6x','config-low','config-high','config-invalid','late','device-only') {
+foreach ($mode in 'native','config-off','config-on','config-3x','config-4x','config-5x','config-6x','config-low','config-high','config-invalid','late','late-off','device-only') {
     $multiplierCase = $mode -like 'config-*' -and $mode -notin 'config-off','config-on'
     if (Test-Path -LiteralPath $configPath) { Remove-Item -LiteralPath $configPath }
-    if ($mode -in 'config-off','config-on','late','device-only' -or $multiplierCase) {
-        $preference = if ($mode -eq 'config-off') { 'false' } else { 'true' }
+    if ($mode -in 'config-off','config-on','late','late-off','device-only' -or $multiplierCase) {
+        $preference = if ($mode -in 'config-off','late-off') { 'false' } else { 'true' }
         $value = switch($mode) { 'config-low' { '-1' } 'config-high' { '99' } 'config-invalid' { 'invalid' } default { if($multiplierCase){$mode.Substring(7,1)}else{'2'} } }
         "[Frame Generation]`r`nEnabled = $preference`r`nMultiplier = $value`r`n" | Set-Content -LiteralPath $configPath -Encoding utf8
     }
     $arguments = @($patcher,$logs,(Join-Path $plugin 'runtimes'))
     if ($mode -in 'late','device-only') { $arguments += "--$mode" }
+    if ($mode -eq 'late-off') { $arguments += '--late','--fg-off' }
     if ($mode -eq 'config-on' -or $multiplierCase) { $arguments += '--fg-on' }
     if($multiplierCase){$expected=if($mode -eq 'config-high'){6}elseif($mode -in 'config-low','config-invalid'){2}else{[int]$value};$arguments += "$expected"}
     & $testExe @arguments | Out-Host
@@ -30,6 +31,11 @@ foreach ($mode in 'native','config-off','config-on','config-3x','config-4x','con
     if ($mode -in 'late','device-only') {
         if ([regex]::Matches($native,'WARNING EARLY_HOOKS_MISSED').Count -ne 1 -or -not $native.Contains('interpolation latched OFF')) {
             throw "Missed early hooks did not warn once and keep FG off ($mode)."
+        }
+    } elseif ($mode -eq 'late-off') {
+        # Frame Generation was never requested: warn about the hooks, but report it Off, not failed.
+        if ([regex]::Matches($native,'WARNING EARLY_HOOKS_MISSED').Count -ne 1 -or $native.Contains('FRAME_GEN_FAILED')) {
+            throw "Missed early hooks with Frame Generation saved Off must warn once without latching FG failed."
         }
     } else {
         foreach ($event in 'Initialize stage=preloader','IMPORT_RESOLVER_CHAIN UnityPlayer.dll!GetProcAddress','DYNAMIC_GRAPHICS_LOOKUP D3D11CreateDevice',

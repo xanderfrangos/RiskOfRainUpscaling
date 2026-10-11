@@ -29,6 +29,8 @@ int wmain(int argc, wchar_t** argv)
     bool late = argc > 4 && !wcscmp(argv[4], L"--late");
     bool deviceOnly = argc > 4 && !wcscmp(argv[4], L"--device-only");
     bool fgOn = argc > 4 && !wcscmp(argv[4], L"--fg-on");
+    // Missed hooks latch a requested Frame Generation as failed; one saved Off stays Off (0).
+    int missedState = late && argc > 5 && !wcscmp(argv[5], L"--fg-off") ? 0 : -2;
     if (!late && initialize(argv[2], argv[3], L"preloader") <= 0) return 4;
     int expectedMultiplier=fgOn?(argc>5?_wtoi(argv[5]):2):0;
     if(!late && !deviceOnly && multiplier()!=expectedMultiplier)return 11;
@@ -48,10 +50,10 @@ int wmain(int argc, wchar_t** argv)
     if (count() != (late ? 0 : 1)) return 5;
     auto verified = initialize(argv[2], argv[3], L"plugin-awake");
     if (late || deviceOnly) {
-        if (verified != -1 || state() != -2) return 6;
+        if (verified != -1 || state() != missedState) return 6;
         enable(1); // A user toggle cannot recover missed startup hooks.
-        if (state() != -2 || initialize(argv[2], argv[3], L"plugin-awake") != -1) return 7;
-        if (late && (initialize(argv[2], argv[3], L"preloader") <= 0 || state() != -2)) return 10;
+        if (state() != missedState || initialize(argv[2], argv[3], L"plugin-awake") != -1) return 7;
+        if (late && (initialize(argv[2], argv[3], L"preloader") <= 0 || state() != missedState)) return 10;
     } else {
         // The WARP fixture has no FG SDK; On can fail safely while still selecting
         // the D3D12 bridge. Off must never request/load the FG runtime.

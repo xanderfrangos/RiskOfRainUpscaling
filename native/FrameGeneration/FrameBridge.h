@@ -6,6 +6,9 @@
 void ConfigureFrameBridge();
 bool BuildingFrameBridge();
 bool FrameBridgeRequested();
+// [Frame Generation] Enabled at startup: as configured by the preloader, or read from
+// the config file when the preloader never initialized (early hooks disabled or missed).
+bool FrameGenerationRequestedAtStartup();
 bool FrameBridgeWindowEligible(HWND);
 // Called on the D3D11 render thread after a successful DLAA evaluation.
 // outputWidth/outputHeight: Unity's game resolution (the upscaler output); 0 means the chain's size.

@@ -37,15 +37,25 @@ extern "C" int __cdecl RiskOfRainUpscaling_GetPresentationState(){
     if(creationFailures.load())return -1;
     return requested.load(); // 0 native; 1 bridge requested but no active chain; 2 active; -1 creation failure.
 }
+static bool bridgeConfigured=false;
+static std::wstring ConfigPath(){
+    return (std::filesystem::path(g_logFolder).parent_path()/L"config"/L"xanderfrangos.riskofrainupscaling.cfg").wstring();
+}
+// The preloader binds/saves the same preferences used by Mod Options before
+// any swap-chain creation, so a missing entry (standalone tests) stays Off.
+static bool SavedFrameGenerationEnabled(const std::wstring& config,wchar_t (&preference)[16]){
+    GetPrivateProfileStringW(L"Frame Generation",L"Enabled",L"",preference,16,config.c_str());
+    return !_wcsicmp(preference,L"true");
+}
+bool FrameGenerationRequestedAtStartup(){
+    if(bridgeConfigured)return FrameBridgeRequested();
+    wchar_t preference[16]{};return SavedFrameGenerationEnabled(ConfigPath(),preference);
+}
 void ConfigureFrameBridge(){
-    static bool configured=false;
-    if(configured)return;
-    configured=true;
-    // The preloader binds/saves the same preferences used by Mod Options before
-    // any swap-chain creation, so a missing entry (standalone tests) stays Off.
-    const auto config=(std::filesystem::path(g_logFolder).parent_path()/L"config"/L"xanderfrangos.riskofrainupscaling.cfg").wstring();
-    wchar_t preference[16]{};GetPrivateProfileStringW(L"Frame Generation",L"Enabled",L"",preference,16,config.c_str());
-    const bool enabled=!_wcsicmp(preference,L"true");
+    if(bridgeConfigured)return;
+    bridgeConfigured=true;
+    const auto config=ConfigPath();
+    wchar_t preference[16]{};const bool enabled=SavedFrameGenerationEnabled(config,preference);
     wchar_t value[32]{};GetPrivateProfileStringW(L"Frame Generation",L"Multiplier",L"2",value,32,config.c_str());
     wchar_t* end{};long parsed=wcstol(value,&end,10);
     int multiplier=end!=value && !*end?static_cast<int>(std::clamp(parsed,2L,6L)):2;
