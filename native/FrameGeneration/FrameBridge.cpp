@@ -5,6 +5,7 @@
 #include "shaders/Fullscreen.h"
 #include "shaders/UiLayer.h"
 #include "shaders/UiMask.h"
+#include "shaders/UiMaskAlpha.h"
 #include "shaders/FlipRows.h"
 #include "shaders/Letterbox.h"
 #include <array>
@@ -199,13 +200,16 @@ struct BridgeGpu {
     bool opacityUnavailable=false;
     ComPtr<ID3DDeviceContextState> layerState;
     ComPtr<ID3D11VertexShader> layerVertex;
-    ComPtr<ID3D11PixelShader> layerPixel,maskPixel,flipPixel,letterboxPixel;
+    ComPtr<ID3D11PixelShader> layerPixel,maskPixel,maskAlphaPixel,flipPixel,letterboxPixel;
     ComPtr<ID3D11Buffer> placementConstants;
     ComPtr<ID3D11SamplerState> linearClamp;
     ComPtr<ID3D11Query> probeQuery;
     ComPtr<ID3D11ShaderResourceView> opacityView;
     ID3D11Texture2D* opacityViewSource=nullptr; // The view holds a reference, so the address stays unique.
     bool layerUnavailable=false;
+    // DLSS-G ran with UI recomposition last frame. Turning it off and on reconfigures
+    // the runtime (a ~150 ms stall), so a frame whose HUD capture failed keeps it on.
+    bool uiRecomposing=false;
     int layerSource=-1,layerLogs=0; // Logging only.
     // An opaque difference mask covering most of the screen pastes the rendered
     // frame over every generated one. While it does, FSR's HUD-less detection
@@ -396,6 +400,7 @@ struct BridgeGpu {
         RequireBridge(device11->CreateVertexShader(FullscreenShader,sizeof(FullscreenShader),nullptr,&layerVertex),"UI layer vertex shader");
         RequireBridge(device11->CreatePixelShader(UiLayerShader,sizeof(UiLayerShader),nullptr,&layerPixel),"UI layer shader");
         RequireBridge(device11->CreatePixelShader(UiMaskShader,sizeof(UiMaskShader),nullptr,&maskPixel),"UI mask shader");
+        RequireBridge(device11->CreatePixelShader(UiMaskAlphaShader,sizeof(UiMaskAlphaShader),nullptr,&maskAlphaPixel),"UI mask alpha shader");
         RequireBridge(device11->CreatePixelShader(FlipRowsShader,sizeof(FlipRowsShader),nullptr,&flipPixel),"HUD-less row flip shader");
         RequireBridge(device11->CreatePixelShader(LetterboxShader,sizeof(LetterboxShader),nullptr,&letterboxPixel),"Game image placement shader");
         D3D11_BUFFER_DESC b{};b.ByteWidth=16;b.Usage=D3D11_USAGE_DEFAULT;b.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
@@ -530,6 +535,13 @@ struct BridgeGpu {
         ConvertInto(finalGame,gameBuffer.Get(),gameBufferBottomUp,gameBufferFloat);
         return true;
     }
+    // UI alpha 1 wherever final differs from the HUD-less snapshot, 0 elsewhere.
+    void MaskAlpha(ID3D11ShaderResourceView* final,ID3D11RenderTargetView* target,UINT width,UINT height){
+        LayerShaders();
+        const float clear[4]{};context11->ClearRenderTargetView(target,clear);
+        ID3D11ShaderResourceView* inputs[2]{final,hudless.view.Get()};
+        Draw(maskAlphaPixel.Get(),inputs,2,target,width,height);
+    }
     // The HUD over the HUD-less image, as premultiplied color: exact with measured
     // HUD opacity, otherwise every changed pixel as opaque UI. The final image is
     // read from a copy, never through a producer view.
@@ -584,7 +596,7 @@ struct BridgeGpu {
         opacity.reset();opacityView.Reset();opacityViewSource=nullptr;
         hudless.Reset();finalGame.Reset();layerGame.Reset();rows.Reset();rowsView.Reset();floatRows.Reset();floatRowsView.Reset();
         gameBuffer.Reset();probedBuffer=nullptr;
-        layerCovering=false;coverageHigh=coverageLow=coverageSamples=0;coverageSum=coverageMax=0;
+        layerCovering=false;coverageHigh=coverageLow=coverageSamples=0;coverageSum=coverageMax=0;uiRecomposing=false;
         producer.Reset();views.Reset();hasImage=false;for(auto& slot:slots)slot=BridgeSlot{};
     }
 };
@@ -705,6 +717,20 @@ class FrameBridge final : public IDXGISwapChain2 {
                 if(ui){
                     if(scaled)gpu->Place(gpu->OpacityView(hudOpacity),gpu->SlotTarget(slot.uiTarget,slot.ui11.Get()),content);
                     else gpu->context11->CopyResource(slot.ui11.Get(),hudOpacity);
+                }else if(gpu->uiRecomposing && hudlessUsable && !layered && slot.ui11){
+                    // No valid HUD opacity this frame: every pixel the HUD changed is opaque UI.
+                    try {
+                        auto target=gpu->SlotTarget(slot.uiTarget,slot.ui11.Get());
+                        if(scaled){
+                            gpu->MaskAlpha(gpu->finalGame.view.Get(),gpu->layerGame.target.Get(),gameWidth,gameHeight);
+                            gpu->Place(gpu->layerGame.view.Get(),target,content);
+                        }else{
+                            if(!slot.finalView)RequireBridge(gpu->device11->CreateShaderResourceView(slot.shared11.Get(),nullptr,&slot.finalView),"UI layer final view");
+                            gpu->MaskAlpha(slot.finalView.Get(),target,gpu->desc.Width,gpu->desc.Height);
+                        }
+                        ui=true;
+                    }
+                    catch(const std::exception& e){Log(ModLogLevel::Warning,"FRAME_GEN_UI_MASK_FAILED %s; UI recomposition turns off",e.what());}
                 }
                 slot.uiCopied=ui;
                 if(layered){
@@ -778,6 +804,7 @@ class FrameBridge final : public IDXGISwapChain2 {
                 ProfileCpuScope p(PROFILE_LABEL("fg.prepare: SDK tags/constants (CPU)"));
                 generating=inputs && FrameGenerationPrepare(packet,slot.depthTag12.Get(),slot.motionTag12.Get(),hudlessUsable?slot.hudlessTag12.Get():nullptr,ui?slot.uiTag12.Get():nullptr,gpu->desc,interval,render.Width,render.Height,content);
             }
+            gpu->uiRecomposing=generating && ui;
             if(gpu->opacity)gpu->opacity->Cancel();
             if(!generating && gpu->fg){FrameGenerationOff("Off, missing scene/HUD frame, or unsupported present");FrameGenerationClearTags(lastFgFrame,gpu->desc.Width,gpu->desc.Height);}
             // Full-color copies preserve HUD and color; do not invent dirty/scroll rectangles.
@@ -919,9 +946,11 @@ public:
             catch(const std::exception& e){gpu->opacity->Cancel();gpu->opacityUnavailable=true;Log(ModLogLevel::Warning, "FRAME_GEN_UI_FALLBACK %s; ordinary HUDless FG retained",e.what());}
         }
     }
-    // While Unity scales a smaller game image into the window, the target bound when
-    // the HUD camera finishes is Unity's game-sized screen buffer; overlay canvases
-    // and IMGUI draw into it afterwards, and Present reads it (SnapshotFinal).
+    // While Unity scales a smaller game image into the window, the HUD camera's target
+    // after its image effects is Unity's game-sized screen buffer; overlay canvases
+    // (menus) and IMGUI draw into it afterwards, and Present reads it (SnapshotFinal).
+    // Not at BeforeImageEffects: with an image effect the HUD renders into a temporary,
+    // which never receives the overlays.
     void GameBuffer(int frame){
         gpu->gameBuffer.Reset();
         if(failed || !gpu->fg || !gameWidth || packet.frame!=frame || (gameWidth==gpu->desc.Width && gameHeight==gpu->desc.Height))return;
@@ -946,9 +975,7 @@ public:
     }
     void AfterHud(int frame,bool safe){
         ProfilerEnd(PROFILE_LABEL("fg.HUD draws + UI opacity replay (includes the game's HUD)"));
-        BridgeOperation operation(busy);if(!operation.acquired)return;
-        GameBuffer(frame);
-        if(!gpu->opacity)return;
+        BridgeOperation operation(busy);if(!operation.acquired || !gpu->opacity)return;
         bool valid=gpu->opacity->End(frame);
         const char* reason=safe?gpu->opacity->Reason():"HUD image effect or late diagnostic overlay";
         if(!valid || !safe){
@@ -956,6 +983,7 @@ public:
             gpu->opacity->Cancel();
         }else uiFallbackReason=nullptr;
     }
+    void GameBufferPoint(int frame){BridgeOperation operation(busy);if(operation.acquired)GameBuffer(frame);}
     void RenderFrame(int frame){BridgeOperation operation(busy);if(operation.acquired)displayFrame=frame;}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,void** output) override{
         if(!output)return E_POINTER;*output=nullptr;
@@ -1100,6 +1128,7 @@ void CreateBridgeDisplay(ID3D12Device* queueDevice,IDXGIFactory2* factory,HWND h
 void FrameBridgeSubmitInputs(const CameraFrame& packet,ID3D11Texture2D* depth,ID3D11Texture2D* motion,UINT outputWidth,UINT outputHeight){std::lock_guard<std::mutex> guard(gameplayBridgeMutex);if(gameplayBridge)gameplayBridge->DlaaInputs(packet,depth,motion,outputWidth,outputHeight);}
 void FrameBridgeBeforeHud(int frame,bool captureUi){std::lock_guard<std::mutex> guard(gameplayBridgeMutex);if(gameplayBridge)gameplayBridge->BeforeHud(frame,captureUi);}
 void FrameBridgeAfterHud(int frame,bool safe){std::lock_guard<std::mutex> guard(gameplayBridgeMutex);if(gameplayBridge)gameplayBridge->AfterHud(frame,safe);}
+void FrameBridgeGameBuffer(int frame){std::lock_guard<std::mutex> guard(gameplayBridgeMutex);if(gameplayBridge)gameplayBridge->GameBufferPoint(frame);}
 void FrameBridgeRenderFrame(int frame){std::lock_guard<std::mutex> guard(gameplayBridgeMutex);if(gameplayBridge)gameplayBridge->RenderFrame(frame);}
 HRESULT CreateFrameBridge(IDXGIFactory2* factory,ID3D11Device* device,HWND hwnd,const DXGI_SWAP_CHAIN_DESC1* desc,
     const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fullscreen,IDXGIOutput* output,IDXGISwapChain1** result){

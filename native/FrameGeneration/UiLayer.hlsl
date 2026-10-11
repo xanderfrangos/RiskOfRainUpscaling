@@ -42,3 +42,11 @@ float4 UiMask(Vertex v) : SV_Target
     if (all(color == hudlessColor.Load(pixel).rgb)) discard;
     return float4(color, 1);
 }
+// DLSS UI alpha when a frame's HUD opacity capture failed: the same opaque mask, so
+// recomposition stays enabled (toggling it makes the runtime reconfigure).
+float4 UiMaskAlpha(Vertex v) : SV_Target
+{
+    int3 pixel = int3(v.position.xy, 0);
+    if (all(finalColor.Load(pixel).rgb == hudlessColor.Load(pixel).rgb)) discard;
+    return 1;
+}

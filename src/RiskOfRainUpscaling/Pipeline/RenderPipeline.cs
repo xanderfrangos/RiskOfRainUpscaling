@@ -265,6 +265,10 @@ namespace RiskOfRainUpscaling
             resources.Hud.AddCommandBuffer(CameraEvent.BeforeForwardOpaque,resources.FgBefore);
             resources.FgAfter=new CommandBuffer{name="RiskOfRainUpscaling.FrameGeneration.AfterHud"};
             resources.Hud.AddCommandBuffer(CameraEvent.BeforeImageEffects,resources.FgAfter);
+            // After the HUD's image effects the camera target is Unity's screen buffer, which
+            // overlay canvases (menus) draw into next; scaled frame generation presents from it.
+            resources.FgFinished=new CommandBuffer{name="RiskOfRainUpscaling.FrameGeneration.HudFinished"};
+            resources.Hud.AddCommandBuffer(CameraEvent.AfterEverything,resources.FgFinished);
             if(upscaling.Value) {
                 resources.Session=new UpscalerSession(resources.Scene,resources.Context,resources.Color,resources.Depth,resources.Motion,
                     resources.Width,resources.Height,dlss,EffectivePlacement(resources.Scene,dlss),mipBiasOffset.Value,log,upscaler.Value,preset.Value,outlines.Value);
@@ -425,9 +429,11 @@ namespace RiskOfRainUpscaling
                     Log(safe?"FRAME_GEN_HUD_OPACITY safe; measured HUD opacity available":"FRAME_GEN_HUD_OPACITY unsafe reason=" + unsafeReason + "; the UI layer uses the opaque difference mask");
                     hudOpacityReason=unsafeReason;
                 }
-                active.FgBefore.Clear();active.FgAfter.Clear();
+                active.FgBefore.Clear();active.FgAfter.Clear();active.FgFinished.Clear();
                 active.FgBefore.IssuePluginEventAndData(NativeApi.FrameGenerationGetBeforeHudEvent(),Time.frameCount,safe?IntPtr.Zero:new IntPtr(1));
                 active.FgAfter.IssuePluginEventAndData(NativeApi.FrameGenerationGetAfterHudEvent(),safe?Time.frameCount:-Time.frameCount,IntPtr.Zero);
+                active.FgFinished.SetRenderTarget(BuiltinRenderTextureType.CameraTarget);
+                active.FgFinished.IssuePluginEventAndData(NativeApi.FrameGenerationGetAfterHudEvent(),Time.frameCount,new IntPtr(1));
             }
             if (active.Low && camera == active.Sky && camera.targetTexture != active.World)
             {

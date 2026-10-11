@@ -28,7 +28,7 @@ namespace RiskOfRainUpscaling
         internal RenderTexture[] Frozen;
         internal int RequestFrame;
         internal RenderPipeline.CaptureMetadata CapturedScene;
-        internal CommandBuffer Geometry,Before,After,Presentation,FgBefore,FgAfter,UpscalePre,DiagnosticPreviews,DiagnosticFinal;
+        internal CommandBuffer Geometry,Before,After,Presentation,FgBefore,FgAfter,FgFinished,UpscalePre,DiagnosticPreviews,DiagnosticFinal;
         internal IntPtr Context,Diagnostics;
         internal bool DiagnosticsFailureReported,diagnosticsUnavailable;
         internal bool DiagnosticsReady => Diagnostics!=IntPtr.Zero && NativeApi.DiagnosticsState(Diagnostics)>=0;
@@ -129,11 +129,13 @@ namespace RiskOfRainUpscaling
             if(Hud && Presentation!=null)Hud.RemoveCommandBuffer(CameraEvent.BeforeForwardOpaque,Presentation);
             if(Hud && FgBefore!=null)Hud.RemoveCommandBuffer(CameraEvent.BeforeForwardOpaque,FgBefore);
             if(Hud && FgAfter!=null)Hud.RemoveCommandBuffer(CameraEvent.BeforeImageEffects,FgAfter);
+            if(Hud && FgFinished!=null)Hud.RemoveCommandBuffer(CameraEvent.AfterEverything,FgFinished);
             if(Tail){Tail.Process=null;Tail.enabled=false;UnityEngine.Object.Destroy(Tail);Tail=null;}
             Geometry?.Release();Before?.Release();After?.Release();Presentation?.Release();Geometry=Before=After=Presentation=null;
             DiagnosticPreviews?.Release();DiagnosticFinal?.Release();DiagnosticPreviews=DiagnosticFinal=null;
             FgBefore?.Release();FgBefore=null;
             FgAfter?.Release();FgAfter=null;
+            FgFinished?.Release();FgFinished=null;
             UpscalePre?.Release();UpscalePre=null;
         }
         internal void Release()

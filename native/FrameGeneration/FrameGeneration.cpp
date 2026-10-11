@@ -167,5 +167,10 @@ static void __stdcall FEvent(int frame,void* skipUi){if(frame>0)FrameBridgeBefor
 extern "C" void* __cdecl RiskOfRainUpscaling_FrameGenerationGetBeforeHudEvent(){return reinterpret_cast<void*>(&FEvent);}
 // Separate callback: signed frame specifies whether managed post-effects and
 // late overlays are safe. Existing negative FEvent IDs keep their frame role.
-static void __stdcall FHudEvent(int frame,void*){if(frame && frame!=INT_MIN)FrameBridgeAfterHud(frame>0?frame:-frame,frame>0);}
+// Non-null data: the HUD camera finished, image effects included (game buffer point).
+static void __stdcall FHudEvent(int frame,void* finished){
+    if(!frame || frame==INT_MIN)return;
+    if(finished)FrameBridgeGameBuffer(frame>0?frame:-frame);
+    else FrameBridgeAfterHud(frame>0?frame:-frame,frame>0);
+}
 extern "C" void* __cdecl RiskOfRainUpscaling_FrameGenerationGetAfterHudEvent(){return reinterpret_cast<void*>(&FHudEvent);}

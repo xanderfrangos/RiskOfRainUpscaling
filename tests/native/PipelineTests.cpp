@@ -933,6 +933,8 @@ int main(int argc,char** argv) {
                     // Negative frame: unsafe for HUD opacity (this HUD is copied, not drawn), so the
                     // opaque difference mask applies as in the other non-recomposition modes.
                     reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_FrameGenerationGetAfterHudEvent())(-i,nullptr);
+                    // The HUD camera finished: its target is Unity's game buffer.
+                    reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_FrameGenerationGetAfterHudEvent())(i,reinterpret_cast<void*>(1));
                     immediate->OMSetRenderTargets(1,&target,dsv.Get());
                 }else{
                     std::vector<unsigned char> hud(16*12*4,255);D3D11_BOX box{0,0,0,16,12,1};

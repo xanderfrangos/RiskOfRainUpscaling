@@ -12,6 +12,7 @@ bool FrameBridgeWindowEligible(HWND);
 void FrameBridgeSubmitInputs(const CameraFrame&, ID3D11Texture2D*, ID3D11Texture2D*, UINT outputWidth = 0, UINT outputHeight = 0);
 void FrameBridgeBeforeHud(int, bool captureUi=true);
 void FrameBridgeAfterHud(int, bool);
+void FrameBridgeGameBuffer(int);
 void FrameBridgeRenderFrame(int);
 __declspec(dllexport) HRESULT CreateFrameBridge(IDXGIFactory2*, ID3D11Device*, HWND,
     const DXGI_SWAP_CHAIN_DESC1*, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*, IDXGIOutput*, IDXGISwapChain1**);
