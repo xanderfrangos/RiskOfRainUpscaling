@@ -2,7 +2,7 @@
 
 The BepInEx preloader loads its adjacent `RiskOfRainUpscaling.Native.dll` and calls `RiskOfRainUpscaling_Initialize` with startup stage `preloader`. That installs the early graphics hooks (`native/Presentation/GraphicsHooks.cpp`) before Unity creates its device and swap chain, and reads `[Frame Generation]` to choose native D3D11 or the D3D12 bridge. The plugin later calls it again with `plugin-awake`, which only verifies that the hooks saw the device and swap chain.
 
-`[Diagnostics] TraceGraphicsStartup` (default true) controls whether the preloader installs these hooks. The bridge and Frame Generation need them; false keeps Frame Generation off.
+`[Diagnostics] TraceGraphicsStartup` (default true) controls whether the preloader installs these hooks. DLSS, the bridge and Frame Generation need them; false keeps Frame Generation off and DLSS unavailable (Auto upscaling selects FSR, an explicit DLSS choice reports `UPSCALER_UNAVAILABLE`).
 
 ## Automated
 
@@ -14,7 +14,7 @@ Two failure cases cover initialization after graphics creation and a hooked devi
 
 ## Game check
 
-Keep `TraceGraphicsStartup = true`. In `BepInEx/RiskOfRainUpscaling-Diagnostics/native.log`, verify `Initialize stage=preloader`, `BEFORE_D3D11_CREATE_DEVICE` and `SWAPCHAIN_CREATED` before `Initialize stage=plugin-awake`, and `FRAME_BRIDGE_READY` when Frame Generation is enabled at startup. If startup is unavailable, also check `BepInEx/LogOutput.log`. A late plugin load does not install replacement hooks; missed early hooks keep Frame Generation off until restart.
+Keep `TraceGraphicsStartup = true`. In `BepInEx/RiskOfRainUpscaling-Diagnostics/native.log`, verify `Initialize stage=preloader`, `BEFORE_D3D11_CREATE_DEVICE` and `SWAPCHAIN_CREATED` before `Initialize stage=plugin-awake`, and `FRAME_BRIDGE_READY` when Frame Generation is enabled at startup. If startup is unavailable, also check `BepInEx/LogOutput.log`. A late plugin load does not install replacement hooks; missed early hooks keep Frame Generation off and DLSS unavailable until restart.
 
 ## Old installs
 

@@ -33,6 +33,9 @@ try {
     & 'build\native-nmake\RiskOfRainUpscaling.PipelineTests.exe' --hardware
     if ($LASTEXITCODE -ne 0) { throw "Synthetic hardware upscaler evaluation failed, exit=$LASTEXITCODE" }
     Copy-Item -LiteralPath 'build\test-results\native.log' -Destination 'build\test-results\pipeline-hardware.log' -Force
+    & 'build\native-nmake\RiskOfRainUpscaling.PipelineTests.exe' --hardware --no-hooks
+    if ($LASTEXITCODE -ne 0) { throw "Upscaler selection without early hooks failed, exit=$LASTEXITCODE" }
+    Copy-Item -LiteralPath 'build\test-results\native.log' -Destination 'build\test-results\pipeline-no-hooks.log' -Force
     if(Select-String -LiteralPath 'build\test-results\pipeline-hardware.log' -SimpleMatch 'presentCommon() was not observed' -Quiet) {
         throw 'DLAA SDK presentation bookkeeping is still missing.'
     }

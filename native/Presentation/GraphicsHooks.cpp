@@ -15,7 +15,7 @@ static void WarnHooksMissed()
 {
     static std::atomic<bool> warned{false};
     if (warned.exchange(true)) return;
-    Log(ModLogLevel::Warning, "WARNING EARLY_HOOKS_MISSED observedDevices=%d observedSwapchains=%d; Frame Generation stays OFF until restart. Check the BepInEx preloader and startup tracing configuration.", creations.load(), swapchains.load());
+    Log(ModLogLevel::Warning, "WARNING EARLY_HOOKS_MISSED observedDevices=%d observedSwapchains=%d; Frame Generation stays OFF and DLSS is unavailable (Auto upscaling uses FSR) until restart. Check the BepInEx preloader and startup tracing configuration.", creations.load(), swapchains.load());
     FrameGenerationFail("Early graphics hooks missed; restart with the preloader installed and startup tracing enabled");
 }
 bool VerifyGraphicsHooks()

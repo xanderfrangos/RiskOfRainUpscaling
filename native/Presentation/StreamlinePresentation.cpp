@@ -32,6 +32,10 @@ void TrackStreamlineSwapChain(IDXGISwapChain* chain) {
     ComPtr<IUnknown> identity;
     if(SUCCEEDED(chain->QueryInterface(IID_PPV_ARGS(&identity))))presentation->observed.insert(identity.Get());
 }
+bool StreamlinePresentationObserved() {
+    std::lock_guard<std::recursive_mutex> guard(streamlineMutex);
+    return !presentation->observed.empty();
+}
 unsigned StreamlinePresentedFrames() {
     std::lock_guard<std::recursive_mutex> guard(streamlineMutex);
     return presentation->presented;

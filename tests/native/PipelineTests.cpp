@@ -724,6 +724,9 @@ int main(int argc,char** argv) {
     if(fgLive && (!fg || reflexLimit || requestedMultiplier!=2))return 125;
     if(reflexLimit && !fg)return 90;
     if(bridge && !hardware)return 60;
+    // --no-hooks: the game's chain exists but the early hooks never observed it.
+    bool noHooks=false;for(int i=1;i<argc;++i)noHooks|=!std::strcmp(argv[i],"--no-hooks");
+    if(noHooks && (!hardware || bridge || fsrUpscaler))return 159;
     wchar_t current[32768]{};GetCurrentDirectoryW(32768,current);std::wstring root=current;
     RiskOfRainUpscaling_SetLoggingLevel(4); // Detailed fixture evidence.
     RiskOfRainUpscaling_Initialize((root+L"\\build\\test-results").c_str(),(root+L"\\build\\package\\BepInEx\\plugins\\RiskOfRainUpscaling\\runtimes").c_str(),L"pipeline-test");
@@ -763,7 +766,7 @@ int main(int argc,char** argv) {
         chainDesc.SampleDesc.Count=1;chainDesc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;chainDesc.BufferCount=2;chainDesc.SwapEffect=DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
         if(fg && appWaitable)chainDesc.Flags=DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH|DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING|DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
         if(FAILED(createChain()))return 32;
-        ObserveChain(chain.Get()); // Exactly the production observer/hook path.
+        if(!noHooks)ObserveChain(chain.Get()); // Exactly the production observer/hook path.
         if(fg && visible){ShowWindow(window,SW_SHOW);UpdateWindow(window);}
         if(fg){
             ComPtr<IDXGISwapChain2> chain2;if(FAILED(chain.As(&chain2)))return 86;
@@ -810,6 +813,18 @@ int main(int argc,char** argv) {
     ce(-2,c);
     ComPtr<ID3D11RenderTargetView> restored;immediate->OMGetRenderTargets(1,&restored,nullptr);
     if(restored.Get()!=rtv.Get())return 13;
+    if(noHooks) {
+        // DLSS could never present: Auto upscales with FSR, and an explicit DLSS choice is
+        // unavailable at creation instead of failing after 60 evaluations.
+        if(RiskOfRainUpscaling_UpscalerState(c)!=1 || RiskOfRainUpscaling_UpscalerKind(c)!=2)return 160;
+        if(RiskOfRainUpscaling_SetUpscalerBackend(1))return 161;
+        auto explicitDlss=RiskOfRainUpscaling_UpscalerCreate(&d);RiskOfRainUpscaling_SetUpscalerBackend(0);
+        if(!explicitDlss)return 161;
+        ce(-2,explicitDlss);
+        if(RiskOfRainUpscaling_UpscalerState(explicitDlss)!=-2 || RiskOfRainUpscaling_UpscalerKind(explicitDlss)!=0)return 162;
+        printf("PASS: without the early graphics hooks Auto upscales with FSR and explicit DLSS is unavailable at creation.\n");
+        return 0;
+    }
     if(!hardware) {
         if(RiskOfRainUpscaling_UpscalerState(c)!=-2)return 14;
         ce(1,c);if(Read(device.Get(),immediate.Get(),output.Get())!=pattern)return 15;

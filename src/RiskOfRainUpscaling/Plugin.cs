@@ -62,7 +62,7 @@ namespace RiskOfRainUpscaling
                 NativeApi.SetLoggingLevel((int)settings.LoggingLevel.Value);
                 var startup = NativeApi.Initialize(logFolder, Path.Combine(Path.GetDirectoryName(Info.Location), "runtimes"), "plugin-awake");
                 if (startup < 0)
-                    LogMessage(ModLogLevel.Warning, "Early graphics hooks missed; Frame Generation stays OFF until restart. Check the preloader installation and TraceGraphicsStartup setting. See native.log.");
+                    LogMessage(ModLogLevel.Warning, "Early graphics hooks missed; Frame Generation stays OFF and DLSS is unavailable (Auto upscaling uses FSR) until restart. Check the preloader installation and TraceGraphicsStartup setting. See native.log.");
                 nativeLoaded = true;
                 settings.Generation.SetPresentationState(NativeApi.GetPresentationState());
                 Write("Presentation="+NativeApi.PresentationLabel+"; Frame Generation="+NativeApi.FrameGenerationLabel+"; startup runtime selection in "+Config.ConfigFilePath);

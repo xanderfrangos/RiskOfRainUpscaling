@@ -1,4 +1,5 @@
 #include "Upscaling/Upscaler.h"
+#include "Presentation/StreamlinePresentation.h"
 #include <atomic>
 #include <cstdio>
 #include <stdexcept>
@@ -33,13 +34,23 @@ std::unique_ptr<UpscalerFeature> CreateUpscalerFeature(ID3D11Device* device, Ups
         sprintf_s(reason,"DLSS requires an NVIDIA adapter (vendor 0x%04x); select Auto or FSR",desc.VendorId);
         unavailable=reason; return nullptr;
     }
+    // DLSS must see every Present, which only the preloader's early hooks route to it.
+    // Without them it would stop after 60 evaluations and stay latched until restart.
+    const bool presentation=StreamlinePresentationObserved();
+    if(backend==UpscalerBackend::DLSS && !presentation) {
+        unavailable="DLSS requires the early graphics hooks (preloader installed, [Diagnostics] TraceGraphicsStartup = true); select Auto or FSR, or restart with them";
+        return nullptr;
+    }
     if(backend==UpscalerBackend::DLSS || (backend==UpscalerBackend::Auto && nvidia)) {
         if(backend==UpscalerBackend::DLSS) return CreateDlssFeature(device);
         // Unsupported DLSS falls back to FSR; a DLSS failure after it ran stays latched until restart.
-        try { return CreateDlssFeature(device); }
-        catch(const std::exception& e) {
-            if(DlssEverReady()) throw;
-            Log(ModLogLevel::Warning,"DLSS_UNAVAILABLE %s; Auto selects FSR",e.what());
+        if(!presentation) Log(ModLogLevel::Warning,"DLSS_UNAVAILABLE early graphics hooks missed, so DLSS cannot present; Auto selects FSR");
+        else {
+            try { return CreateDlssFeature(device); }
+            catch(const std::exception& e) {
+                if(DlssEverReady()) throw;
+                Log(ModLogLevel::Warning,"DLSS_UNAVAILABLE %s; Auto selects FSR",e.what());
+            }
         }
     }
     return CreateFsrFeature(device);

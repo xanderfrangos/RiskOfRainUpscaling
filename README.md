@@ -63,7 +63,7 @@ Change settings in-game under **Settings → Mod Options → Risk of Rain Upscal
 | `[General]` | `Enabled`: master switch for everything the mod does. |
 | `[Upscaling]` | `Enabled`, `Quality` (default DLAA), `Upscaler` (Auto, DLSS, FSR), `DLSS Preset`, `Outlines`, `Sharpening`, `MipBiasOffset`, `MainMenu`. |
 | `[Frame Generation]` | `Enabled` (default off), `Multiplier`, `Backend` (Auto, DLSS, FSR), `ReflexFrameLimiter`. Turning Frame Generation on when it was off at startup needs a restart; changing `Backend` always does. |
-| `[Diagnostics]` | `Logging Level` (default Off), `ShowOverlay`, `CaptureWhileOff`, `TraceGraphicsStartup` (leave on; Frame Generation needs it). |
+| `[Diagnostics]` | `Logging Level` (default Off), `ShowOverlay`, `CaptureWhileOff`, `TraceGraphicsStartup` (leave on; DLSS and Frame Generation need it). |
 | `[Hotkeys]` | `Enable Hotkeys` (default off) and five rebindable shortcuts. |
 
 </details>

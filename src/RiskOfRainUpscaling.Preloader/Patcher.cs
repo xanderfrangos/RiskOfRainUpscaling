@@ -23,9 +23,9 @@ namespace RiskOfRainUpscaling.Preloader
                 // The plugin GUID names this file; native startup reads it before the plugin loads.
                 var config = new ConfigFile(Path.Combine(Paths.ConfigPath, "xanderfrangos.riskofrainupscaling.cfg"), true);
                 logging = new LoggingSettings(config);
-                if (!config.Bind(LoggingSettings.Section, "TraceGraphicsStartup", true, "Install the early graphics hooks that the D3D12 presentation bridge and Frame Generation require (their startup is also logged to native.log). Disabling this keeps Frame Generation off. Requires restart.").Value)
+                if (!config.Bind(LoggingSettings.Section, "TraceGraphicsStartup", true, "Install the early graphics hooks that DLSS, the D3D12 presentation bridge and Frame Generation require (their startup is also logged to native.log). Disabling this keeps Frame Generation off and DLSS unavailable (Auto upscaling uses FSR). Requires restart.").Value)
                 {
-                    logging.Write(log, ModLogLevel.Warning, "Graphics startup tracing disabled; Frame Generation stays OFF. Enable TraceGraphicsStartup and restart to install early hooks.");
+                    logging.Write(log, ModLogLevel.Warning, "Graphics startup tracing disabled; Frame Generation stays OFF and DLSS is unavailable (Auto upscaling uses FSR). Enable TraceGraphicsStartup and restart to install early hooks.");
                     return;
                 }
                 var folder = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
