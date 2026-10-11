@@ -39,6 +39,12 @@ namespace RiskOfRainUpscaling
         private readonly List<PipelineResources> retiring = new List<PipelineResources>();
         private PipelineResources active;
         private bool capturing, disposed, requestedCapture, attachFailed;
+        // A runtime failure pauses upscaling, or lower-resolution modes, for this session
+        // without saving Off over the player's settings. Changing an upscaling setting
+        // retries; so does the Toggle Upscaling shortcut while upscaling is paused.
+        private bool upscalingSuspended, lowerResolutionSuspended;
+        private bool UpscalingOn => upscaling.Value && !upscalingSuspended;
+        private DlssQuality QualityOn => lowerResolutionSuspended ? DlssQuality.DLAA : quality.Value;
         private float nextAudit;
         private string lastBlocked;
         private int traceFrames;
@@ -74,10 +80,10 @@ namespace RiskOfRainUpscaling
             Log("PIPELINE_READY available=" + available + "; overlay=" + settings.ToggleOverlay.Value + "; cycle quality=" + settings.CycleQuality.Value + "; capture=" + settings.CaptureEvidence.Value + "; reconstruction=" + settings.ToggleReconstruction.Value + "; FG=" + settings.ToggleFrameGeneration.Value  + "; hotkeys enabled=" + settings.HotkeysEnabled.Value + "; quality=" + quality.Value +
                 ". Color=end of effects, depth/motion=early. Lower-resolution world is composed into the HUD camera's target before the HUD draws.");
             Camera.onPreCull += BeforeCull; Camera.onPreRender += BeforeRender; Camera.onPostRender += AfterRender;
-            if(available)fgTiming=new FrameGenerationTiming(()=>!disposed && modEnabled && plugin.isActiveAndEnabled && generation.LiveEnabled && upscaling.Value &&
+            if(available)fgTiming=new FrameGenerationTiming(()=>!disposed && modEnabled && plugin.isActiveAndEnabled && generation.LiveEnabled && UpscalingOn &&
                 active?.Session!=null && active.Session.State>=1 && Time.timeScale>0 && Application.isFocused &&
                 plugin.ReconstructionCamera(active.Scene,mainMenu.Value) && Screen.fullScreenMode!=FullScreenMode.ExclusiveFullScreen,
-                ()=>!disposed && modEnabled && plugin.isActiveAndEnabled && settings.ReconstructionEnabled && reflexLimiter.Value,log);
+                ()=>!disposed && modEnabled && plugin.isActiveAndEnabled && UpscalingOn && reflexLimiter.Value,log);
         }
         private void Log(string message) => log.Info(message);
         private void LogDebug(string message) => log.Debug(message);
@@ -86,7 +92,12 @@ namespace RiskOfRainUpscaling
         private bool HotkeyDown(ConfigEntry<KeyboardShortcut> shortcut) =>
             settings.HotkeysEnabled.Value && Application.isFocused && shortcut.Value.IsDown() && !plugin.IsBindingHotkey();
         internal bool OwnsTarget(Camera camera) { return active != null && active.Scene == camera && camera.targetTexture == active.World && active.World; }
-        private void ReconstructionChanged(object sender, EventArgs args) { attachFailed = false; }
+        private void ReconstructionChanged(object sender, EventArgs args) { attachFailed = false; upscalingSuspended = lowerResolutionSuspended = false; }
+        private void SuspendUpscaling(string reason)
+        {
+            upscalingSuspended = true;
+            LogError("UPSCALING_FALLBACK " + reason + "; upscaling paused for this session, saved settings kept. Changing an upscaling setting or the Toggle Upscaling shortcut retries.");
+        }
         internal void Tick(bool enabled)
         {
             modEnabled=enabled;
@@ -102,14 +113,19 @@ namespace RiskOfRainUpscaling
                 attachFailed=false;
                 quality.Value=DlssPolicy.Next(quality.Value);Log("UPSCALER_QUALITY "+quality.Value);
             }
-            if (HotkeyDown(settings.ToggleReconstruction) && !capturing) { upscaling.Value=!upscaling.Value; attachFailed=false; Log("UPSCALING_TOGGLED "+upscaling.Value); }
+            if (HotkeyDown(settings.ToggleReconstruction) && !capturing) {
+                attachFailed=false;
+                // While a failure pauses upscaling, the shortcut retries rather than saving Off.
+                if (upscalingSuspended && upscaling.Value) { upscalingSuspended=lowerResolutionSuspended=false; Log("UPSCALING_RETRY Toggle Upscaling shortcut"); }
+                else { upscaling.Value=!upscaling.Value; Log("UPSCALING_TOGGLED "+upscaling.Value); }
+            }
             if (HotkeyDown(settings.CaptureEvidence) && !capturing) requestedCapture = true;
-            if (!modEnabled || (!captureWhileOff.Value && !upscaling.Value) || !available) { Detach("disabled/unsupported"); return; }
+            if (!modEnabled || (!captureWhileOff.Value && !UpscalingOn) || !available) { Detach("disabled/unsupported"); return; }
             // Finish the diagnostic readback before replacing its camera/resources.
             if (capturing) return;
             // The Off check above already ran: the next Tick detaches, or rebuilds without
             // upscaling while capturing with upscaling Off.
-            if(active?.Session!=null && active.Session.State<0) {upscaling.Value=false;active.Session.Restore();LogError("UPSCALING_FALLBACK native failure; Off selected; camera/AA restored; see native.log. The Toggle Upscaling shortcut retries explicitly.");return;}
+            if(active?.Session!=null && active.Session.State<0) {active.Session.Restore();SuspendUpscaling("native failure; camera/AA restored; see native.log");return;}
             if (attachFailed) return;
             var rigs = CameraRigController.readOnlyInstancesList.Where(r => r && r.sceneCam && plugin.ReconstructionCamera(r.sceneCam,mainMenu.Value)).ToArray();
             if (rigs.Length != 1) { Detach("no single eligible gameplay/main-menu/character-select/intro scene camera"); return; }
@@ -120,12 +136,12 @@ namespace RiskOfRainUpscaling
                 rig.sceneCam.stereoEnabled || rig.uiCam.stereoEnabled || rig.uiCam.rect != new Rect(0,0,1,1) ||
                 rig.uiCam.gameObject.scene!=rig.sceneCam.gameObject.scene || rig.uiCam.depth<=rig.sceneCam.depth)
             { Detach("HUD unavailable or belongs to another render target/display"); return; }
-            bool dlaa = upscaling.Value;
+            bool dlaa = UpscalingOn;
             // A property of this camera, not a failure: skip it and keep the saved setting
             // for the next eligible camera.
             if(dlaa && (rig.sceneCam.orthographic || QualitySettings.activeColorSpace!=ColorSpace.Linear))
             { Block("Upscaling requires a perspective camera and Linear color space; camera " + rig.sceneCam.name + " in scene " + rig.sceneCam.gameObject.scene.name + " left unmodified."); return; }
-            var dlss = dlaa ? quality.Value : DlssQuality.DLAA;
+            var dlss = dlaa ? QualityOn : DlssQuality.DLAA;
             bool low = dlaa && dlss != DlssQuality.DLAA;
             if (low && !WorldRoutingPolicy.CanRoute(true, true, rig.sceneCam.targetTexture && !OwnsTarget(rig.sceneCam), rig.uiCam.targetTexture,
                 rig.skyboxCam && rig.skyboxCam.targetTexture && !(active != null && active.Sky == rig.skyboxCam && rig.skyboxCam.targetTexture == active.World),
@@ -148,15 +164,14 @@ namespace RiskOfRainUpscaling
                 Detach("camera/resolution/configuration changed");
                 try { active = new PipelineResources(rig, width, height, inputWidth, inputHeight, low); Attach(dlss); }
                 catch (Exception exception) { active?.Restore(); if (active != null) Retire(active); active = null;
-                    // After the setting change: its SettingChanged handler clears attachFailed.
-                    upscaling.Value=false; attachFailed = true;
-                    Block("Attach failed: " + exception.Message + "; renderer restored and paused. The Toggle Upscaling shortcut explicitly retries; restart also resets it. See native.log."); return; }
+                    upscalingSuspended = attachFailed = true;
+                    Block("Attach failed: " + exception.Message + "; renderer restored and paused for this session, saved settings kept. Changing an upscaling setting or the Toggle Upscaling shortcut retries. See native.log."); return; }
             }
             active.Scene.depthTextureMode |= DepthTextureMode.Depth | DepthTextureMode.MotionVectors;
             if ((active.Low || active.Session!=null) && !active.TailIsLast()) {
                 DisableLowerResolution();
-                upscaling.Value=false;
-                Block("Another scene image effect was added after our final capture; DLAA/DLSS disabled."); return;
+                upscalingSuspended=true;
+                Block("Another scene image effect was added after our final capture; DLAA/DLSS paused for this session."); return;
             }
             // Display-sized post-processing discards the render-sized OnRenderImage
             // chain; only effects we can rerun at display size are allowed there.
@@ -164,7 +179,7 @@ namespace RiskOfRainUpscaling
                 placement=DlaaPlacement.EndOfEffects;
                 Block("Scene image effect " + effect + " cannot run at display size; upscaling moved to the end of effects for this session."); return;
             }
-            if (NativeApi.SceneInputsState(active.Context) == -2) { upscaling.Value=false;attachFailed = true; Block("Native input capture failed; renderer restored. The Toggle Upscaling shortcut explicitly retries. See native.log."); return; }
+            if (NativeApi.SceneInputsState(active.Context) == -2) { upscalingSuspended = attachFailed = true; Block("Native input capture failed; renderer restored and paused for this session. Changing an upscaling setting or the Toggle Upscaling shortcut retries. See native.log."); return; }
             // Reflection over every camera event and component: only while Debug logging is on.
             if (log.IsEnabled(ModLogLevel.Debug) && Time.unscaledTime >= nextAudit)
             {
@@ -227,7 +242,10 @@ namespace RiskOfRainUpscaling
         }
         private void DisableLowerResolution()
         {
-            if (quality.Value != DlssQuality.DLAA) { quality.Value = DlssQuality.DLAA; Log("UPSCALER_QUALITY DLAA (lower-resolution routing failed)"); }
+            if (quality.Value != DlssQuality.DLAA && !lowerResolutionSuspended) {
+                lowerResolutionSuspended = true;
+                Log("UPSCALER_QUALITY DLAA for this session (lower-resolution routing failed; saved quality " + quality.Value + " kept)");
+            }
         }
         private void Block(string reason)
         {
@@ -256,7 +274,7 @@ namespace RiskOfRainUpscaling
             resources.After.SetRenderTarget(BuiltinRenderTextureType.CameraTarget);
             // Low-scale color comes from the explicit last OnRenderImage source.
             // Do not let a CameraTarget alias overwrite that copy later.
-            if (!resources.Low && !upscaling.Value) resources.Scene.AddCommandBuffer(CameraEvent.AfterEverything, resources.After);
+            if (!resources.Low && !UpscalingOn) resources.Scene.AddCommandBuffer(CameraEvent.AfterEverything, resources.After);
             // Route first: its world composition must precede the FG HUD-less copy
             // at the same HUD camera event.
             if (resources.Low) {
@@ -272,10 +290,10 @@ namespace RiskOfRainUpscaling
             // overlay canvases (menus) draw into next; scaled frame generation presents from it.
             resources.FgFinished=new CommandBuffer{name="RiskOfRainUpscaling.FrameGeneration.HudFinished"};
             resources.Hud.AddCommandBuffer(CameraEvent.AfterEverything,resources.FgFinished);
-            if(upscaling.Value) {
+            if(UpscalingOn) {
                 resources.Session=new UpscalerSession(resources.Scene,resources.Context,resources.Color,resources.Depth,resources.Motion,
                     resources.Width,resources.Height,dlss,EffectivePlacement(resources.Scene,dlss),mipBiasOffset.Value,log,upscaler.Value,preset.Value,outlines.Value);
-                resources.Session.Failure=e=>{upscaling.Value=false;LogError("UPSCALING_FALLBACK "+e.Message);};
+                resources.Session.Failure=e=>SuspendUpscaling(e.Message);
                 resources.Session.Initialize();
                 if(resources.Session.BeforePostProcessing) {
                     // Added after our depth/motion capture at the same event, so the
@@ -319,7 +337,7 @@ namespace RiskOfRainUpscaling
                 // The world target only needs the unscaled frame.
                 return evaluate && !resources.Low?resources.Session.Output:source;
             } catch(Exception e) {
-                upscaling.Value=false;resources.Session.Restore();LogError("UPSCALING_FALLBACK "+e.Message);return source;
+                resources.Session.Restore();SuspendUpscaling(e.Message);return source;
             }
         }
         // Lower-resolution DLSS before post-processing. Source is the render-sized
@@ -461,7 +479,7 @@ namespace RiskOfRainUpscaling
                 active.RecordDiagnostics(DiagnosticsWanted);
                 if(active.Session!=null && !active.Session.UsesPostProcessHook) {
                     try {active.Session.Prepare();}
-                    catch(Exception e){upscaling.Value=false;active.Session.Restore();LogError("UPSCALING_FALLBACK "+e.Message);}
+                    catch(Exception e){active.Session.Restore();SuspendUpscaling(e.Message);}
                 }
                 if (!capturing && traceFrames > 0) LogDebug("CAMERA_ORDER frame=" + Time.frameCount + " scene.preCull pixels=" + camera.pixelWidth + "x" + camera.pixelHeight + " target=" + (camera.targetTexture ? camera.targetTexture.name : "display"));
             }
@@ -469,7 +487,7 @@ namespace RiskOfRainUpscaling
         private void BeforeRender(Camera camera)
         {
             if(active?.Session!=null && camera==active.Scene && !active.Session.ProjectionIntact) {
-                upscaling.Value=false;active.Session.Restore();LogError("UPSCALING_FALLBACK projection overwritten after DLAA preparation");
+                active.Session.Restore();SuspendUpscaling("projection overwritten after DLAA preparation");
             }
             // The event ID carries this frame's camera packet, so rebuild every
             // render. Unprepared frames (second renders, failures) leave the scene untouched.

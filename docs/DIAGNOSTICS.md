@@ -20,7 +20,7 @@ Useful tags:
 | Area | Tags |
 | --- | --- |
 | Startup | `Initialize stage=preloader` / `plugin-awake`, `BEFORE_D3D11_CREATE_DEVICE`, `SWAPCHAIN_CREATED`, `EARLY_HOOKS_MISSED`, `FRAME_BRIDGE_STARTUP`, `FRAME_BRIDGE_READY` |
-| Pipeline (managed) | `PIPELINE_READY`, `PIPELINE_ATTACHED`, `PIPELINE_DETACHED`, `UPSCALING_FALLBACK`, `UPSCALER_QUALITY`, `DISPLAY_POST_PROCESSING` |
+| Pipeline (managed) | `PIPELINE_READY`, `PIPELINE_ATTACHED`, `PIPELINE_DETACHED`, `UPSCALING_FALLBACK`, `UPSCALING_RETRY`, `UPSCALER_QUALITY`, `DISPLAY_POST_PROCESSING` |
 | Upscaler | `UPSCALER_SELECTED`, `UPSCALER_SIZES`, `UPSCALER_READY`, `UPSCALER_EVALUATED`, `UPSCALER_UNAVAILABLE`, `UPSCALER_EVENT_FAILED`, `HISTORY_RESET`, `HISTORY_SUMMARY`, `DLSS_*`, `FSR_*`, `STREAMLINE_PRESENT_*` |
 | Sharpening and outlines | `RCAS_STRENGTH`, `RCAS_CHANGED`, `OUTLINES`, `OUTLINE_MASKS`, `TEMPORAL_OUTLINES`, `FULL_RESOLUTION_OUTLINES` |
 | Frame Generation | `FRAME_GEN_ENABLED`, `FRAME_GEN_PRESENT` (actual SDK frames), `FRAME_GEN_MULTIPLIER`, `FRAME_GEN_UI_RECOMPOSITION`, `FRAME_GEN_UI_LAYER`, `FRAME_GEN_HUD_OPACITY` (why measured HUD opacity is unavailable), `FRAME_GEN_UI_LAYER_COVERAGE`/`_COVERING`/`_RESTORED` (FSR difference-mask share of the screen), `FRAME_GEN_UI_LAYER_DIFF`/`_DUMP` (Debug only, once per session when the mask covers the screen: a difference histogram and `ui-layer-dump/final.bmp`, `hudless.bmp`, `difference-x32.bmp`), `FRAME_GEN_HUDLESS_SOURCE` (producer or a bound HUD RenderTexture, whose rows are flipped), `FRAME_GEN_DISPLAY_MAPPING` (game resolution, window, and the rectangle Frame Generation runs on when Unity scales the game), `FRAME_GEN_GAME_BUFFER` (Unity's game-sized screen buffer and its probed row order), `FRAME_BRIDGE_SOURCE_SIZE`, `FRAME_GEN_FAILED` |
