@@ -53,19 +53,36 @@ namespace RiskOfRainUpscaling
         // reprojects their depth instead, matching world-anchored particles.
         // FindObjectsOfTypeAll includes loaded prefabs, so new clones inherit it.
         private readonly Dictionary<Renderer,MotionVectorGenerationMode> particleMotion=new Dictionary<Renderer,MotionVectorGenerationMode>();
+        // Renderers with a MotionVectors pass are checked again every scan (their
+        // materials can change), so the pass lookup is cached per shader.
+        private static readonly Dictionary<Shader,bool> motionVectorShaders=new Dictionary<Shader,bool>();
+        private readonly List<Material> rendererMaterials=new List<Material>();
         internal void ApplyParticleMotion()
         {
             if(restored)return;
             int added=0;
-            foreach(var renderer in UnityEngine.Resources.FindObjectsOfTypeAll<ParticleSystemRenderer>().Cast<Renderer>()
-                .Concat(UnityEngine.Resources.FindObjectsOfTypeAll<TrailRenderer>()).Concat(UnityEngine.Resources.FindObjectsOfTypeAll<LineRenderer>()))
-            {
-                if(!renderer || renderer.motionVectorGenerationMode!=MotionVectorGenerationMode.Object || particleMotion.ContainsKey(renderer))continue;
-                if(renderer.sharedMaterials.Any(m=>m && Enumerable.Range(0,m.passCount).Any(i=>string.Equals(m.GetPassName(i),"MotionVectors",StringComparison.OrdinalIgnoreCase))))continue;
-                particleMotion.Add(renderer,renderer.motionVectorGenerationMode);
-                renderer.motionVectorGenerationMode=MotionVectorGenerationMode.Camera;++added;
-            }
+            foreach(var renderer in UnityEngine.Resources.FindObjectsOfTypeAll<ParticleSystemRenderer>()) if(UseCameraMotion(renderer)) ++added;
+            foreach(var renderer in UnityEngine.Resources.FindObjectsOfTypeAll<TrailRenderer>()) if(UseCameraMotion(renderer)) ++added;
+            foreach(var renderer in UnityEngine.Resources.FindObjectsOfTypeAll<LineRenderer>()) if(UseCameraMotion(renderer)) ++added;
             if(added>0)log.Debug("PARTICLE_MOTION camera-motion added="+added+" total="+particleMotion.Count+"; particle/trail/line renderers without a MotionVectors pass");
+        }
+        private bool UseCameraMotion(Renderer renderer)
+        {
+            if(!renderer || renderer.motionVectorGenerationMode!=MotionVectorGenerationMode.Object || particleMotion.ContainsKey(renderer))return false;
+            renderer.GetSharedMaterials(rendererMaterials);
+            foreach(var material in rendererMaterials) if(material && HasMotionVectorsPass(material))return false;
+            particleMotion.Add(renderer,renderer.motionVectorGenerationMode);
+            renderer.motionVectorGenerationMode=MotionVectorGenerationMode.Camera;
+            return true;
+        }
+        private static bool HasMotionVectorsPass(Material material)
+        {
+            var shader=material.shader;
+            if(shader && motionVectorShaders.TryGetValue(shader,out bool cached))return cached;
+            bool found=false;
+            for(int i=0;i<material.passCount && !found;++i) found=string.Equals(material.GetPassName(i),"MotionVectors",StringComparison.OrdinalIgnoreCase);
+            if(shader) motionVectorShaders[shader]=found;
+            return found;
         }
         private void RestoreParticleMotion()
         {
