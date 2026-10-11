@@ -107,7 +107,9 @@ namespace RiskOfRainUpscaling
             if (!modEnabled || (!captureWhileOff.Value && !upscaling.Value) || !available) { Detach("disabled/unsupported"); return; }
             // Finish the diagnostic readback before replacing its camera/resources.
             if (capturing) return;
-            if(active?.Session!=null && active.Session.State<0) {upscaling.Value=false;active.Session.Restore();LogError("UPSCALING_FALLBACK native failure; Off selected; camera/AA restored; see native.log. The Toggle Upscaling shortcut retries explicitly.");}
+            // The Off check above already ran: the next Tick detaches, or rebuilds without
+            // upscaling while capturing with upscaling Off.
+            if(active?.Session!=null && active.Session.State<0) {upscaling.Value=false;active.Session.Restore();LogError("UPSCALING_FALLBACK native failure; Off selected; camera/AA restored; see native.log. The Toggle Upscaling shortcut retries explicitly.");return;}
             if (attachFailed) return;
             var rigs = CameraRigController.readOnlyInstancesList.Where(r => r && r.sceneCam && plugin.ReconstructionCamera(r.sceneCam,mainMenu.Value)).ToArray();
             if (rigs.Length != 1) { Detach("no single eligible gameplay/main-menu/character-select/intro scene camera"); return; }
