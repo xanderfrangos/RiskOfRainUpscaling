@@ -101,6 +101,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 
     $packageRoot = Join-Path $PSScriptRoot 'package'
+    # Start from an empty tree: files an earlier build shipped must not reach the package or its manifest.
+    $packageBepInEx = Join-Path $packageRoot 'BepInEx'
+    if (Test-Path -LiteralPath $packageBepInEx) { Remove-Item -LiteralPath $packageBepInEx -Recurse -Force }
     $plugin = Join-Path $packageRoot 'BepInEx\plugins\RiskOfRainUpscaling'
     $patcher = Join-Path $packageRoot 'BepInEx\patchers\RiskOfRainUpscaling'
     New-Item -ItemType Directory -Path $plugin,$patcher -Force | Out-Null

@@ -24,9 +24,12 @@ foreach ($case in 'fresh','upgrade') {
     New-Item -ItemType Directory -Path (Split-Path -Parent $otherPlugin) -Force | Out-Null
     'other mod fixture' | Set-Content -LiteralPath $otherPlugin
     $previousFile = Join-Path $profile 'BepInEx\plugins\XanderChaos-RiskOfRainUpscaling\RiskOfRainUpscaling\RiskOfRainUpscaling.dll'
+    # A file the previous version shipped and this package does not.
+    $staleFile = Join-Path (Split-Path -Parent $previousFile) 'runtimes\Removed.dll'
     if ($case -eq 'upgrade') {
-        New-Item -ItemType Directory -Path (Split-Path -Parent $previousFile) -Force | Out-Null
+        New-Item -ItemType Directory -Path (Split-Path -Parent $staleFile) -Force | Out-Null
         'previous version fixture' | Set-Content -LiteralPath $previousFile
+        'removed file fixture' | Set-Content -LiteralPath $staleFile
     }
     $files = foreach ($source in (Join-Path $plugin 'RiskOfRainUpscaling.dll'),(Join-Path $patcher 'RiskOfRainUpscaling.Native.dll')) {
         @{path=[IO.Path]::GetRelativePath($package,$source);sha256=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash}
@@ -40,8 +43,11 @@ foreach ($case in 'fresh','upgrade') {
     $backups = @(Get-ChildItem -LiteralPath (Join-Path $root 'profile-backups') -Filter 'RiskOfRainUpscaling.dll' -Recurse -File -ErrorAction SilentlyContinue)
     if ($case -eq 'upgrade' -and ($backups.Count -ne 1 -or (Get-Content -LiteralPath $backups[0].FullName) -ne 'previous version fixture')) { throw 'Previous install was not backed up.' }
     if ($case -eq 'fresh' -and $backups.Count -ne 0) { throw 'Fresh install created a plugin backup.' }
+    if (Test-Path -LiteralPath $staleFile) { throw "A file the package no longer ships stayed installed: $case" }
+    $staleBackups = @(Get-ChildItem -LiteralPath (Join-Path $root 'profile-backups') -Filter 'Removed.dll' -Recurse -File -ErrorAction SilentlyContinue)
+    if ($case -eq 'upgrade' -and $staleBackups.Count -ne 1) { throw 'The removed file was not backed up.' }
     if (-not (Test-Path -LiteralPath $otherPlugin)) { throw "Another mod's plugin was removed: $case" }
     if (Test-Path -LiteralPath (Join-Path $profile 'BepInEx\plugins\RiskOfRainUpscaling')) { throw "Installed beside the mod-manager folder: $case" }
     if ((Get-FileHash -LiteralPath $configPath).Hash -ne $configBefore) { throw "BepInEx config changed during install: $case" }
 }
-Write-Output 'PASS: profile install verifies installed hashes, backs up a previous install, and preserves the config and other mods.'
+Write-Output 'PASS: profile install verifies installed hashes, backs up a previous install, removes files the package no longer ships, and preserves the config and other mods.'

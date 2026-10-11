@@ -41,13 +41,18 @@ foreach ($relative in 'BepInEx\plugins\RiskOfRainUpscaling','BepInEx\patchers\Ri
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
     # Windows PowerShell 5.1 has no [IO.Path]::GetRelativePath.
     $sourcePrefix = [IO.Path]::GetFullPath($sourceFolder).TrimEnd('\') + '\'
+    $shipped = @{}
     Get-ChildItem -LiteralPath $sourceFolder -File -Recurse | ForEach-Object {
         $relativeFile = $_.FullName.Substring($sourcePrefix.Length)
+        $shipped[$relativeFile] = $true
         $target = Join-Path $destination $relativeFile
         New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
         Copy-Item -LiteralPath $_.FullName -Destination $target -Force
         if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash) { throw "Installed file mismatch: $target" }
     }
+    # Files of an earlier version that this package no longer ships (backed up above).
+    $destinationPrefix = $destination.TrimEnd('\') + '\'
+    Get-ChildItem -LiteralPath $destination -File -Recurse | Where-Object { -not $shipped.ContainsKey($_.FullName.Substring($destinationPrefix.Length)) } | Remove-Item -Force
 }
 $verified = 0
 foreach ($file in $manifest.files) {
