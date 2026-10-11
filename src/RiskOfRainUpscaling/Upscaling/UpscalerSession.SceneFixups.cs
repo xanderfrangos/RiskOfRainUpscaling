@@ -20,18 +20,32 @@ namespace RiskOfRainUpscaling
         // and remember the original value. Textures loaded later are covered by
         // the periodic rescan from RenderPipeline.
         private readonly Dictionary<Texture2D,float> biased=new Dictionary<Texture2D,float>();
+        // The HUD samples sprite and RawImage textures at display resolution: they keep
+        // their own bias. Rebuilt every scan, since the HUD assigns RawImage textures live.
+        private readonly HashSet<Texture> interfaceTextures=new HashSet<Texture>();
         private bool restored;
         internal void ApplyMipBias()
         {
             if(mipBias==0 || restored)return;
             var watch=System.Diagnostics.Stopwatch.StartNew();
-            int added=0;
+            interfaceTextures.Clear();
+            foreach(var sprite in UnityEngine.Resources.FindObjectsOfTypeAll<Sprite>()) if(sprite && sprite.texture) interfaceTextures.Add(sprite.texture);
+            foreach(var image in UnityEngine.Resources.FindObjectsOfTypeAll<UnityEngine.UI.RawImage>()) if(image && image.texture) interfaceTextures.Add(image.texture);
+            int added=0,returned=0;
             foreach(var texture in UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>())
             {
-                if(!texture || texture.mipmapCount<=1 || biased.ContainsKey(texture))continue;
+                if(!texture || texture.mipmapCount<=1 || interfaceTextures.Contains(texture))continue;
+                if(biased.ContainsKey(texture))continue;
                 biased.Add(texture,texture.mipMapBias);texture.mipMapBias+=mipBias;++added;
             }
-            if(added>0)log.Debug("MIP_BIAS added="+added+" total="+biased.Count+" bias="+mipBias.ToString("F3",CultureInfo.InvariantCulture)+" scanMs="+watch.ElapsedMilliseconds);
+            // Biased before the HUD first showed it (a RawImage assigned later): restore it.
+            foreach(var texture in interfaceTextures)
+                if(texture is Texture2D texture2D && biased.TryGetValue(texture2D,out float original)) {
+                    if(Math.Abs(texture2D.mipMapBias-(original+mipBias))<0.0001f)texture2D.mipMapBias=original;
+                    biased.Remove(texture2D);++returned;
+                }
+            if(added>0 || returned>0)log.Debug("MIP_BIAS added="+added+" interfaceRestored="+returned+" total="+biased.Count+" interfaceTextures="+interfaceTextures.Count+
+                " bias="+mipBias.ToString("F3",CultureInfo.InvariantCulture)+" scanMs="+watch.ElapsedMilliseconds);
         }
         // Hopoo particle shaders have no MotionVectors pass, and Unity's per-object
         // fallback writes garbage for world-space particle geometry (thousands of

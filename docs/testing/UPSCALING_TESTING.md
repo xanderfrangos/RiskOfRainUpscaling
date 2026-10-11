@@ -69,6 +69,6 @@ The game-only parts (display-sized PPv2 rebuild, the outline/blur rerun, recorde
 ## Known limits
 
 - Opaque-only effects (ambient occlusion, SSR, fog, scene tint, Sobel outlines) run at render size before the upscaler.
-- The mip bias also applies to UI textures, so minified icons can look slightly crisper.
+- The mip bias skips sprite and RawImage textures, which the HUD draws at display resolution. A texture used by both the HUD and the world keeps its original bias in the world too, and a RawImage texture first shown after a scan stays biased until the next scan (up to 10 seconds).
 - Another mod's camera-projection UI is not covered by the display-space patches; another mod's scene image effect moves upscaling to End of Effects.
 - The FOV-cut thresholds are a heuristic informed by logs and need visual confirmation.
