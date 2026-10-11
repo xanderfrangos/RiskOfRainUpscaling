@@ -83,11 +83,10 @@ namespace RiskOfRainUpscaling
         // Image effects that run before our tail and cannot be reproduced at display size.
         internal string UnsupportedImageEffect(MonoBehaviour tail)
         {
-            const BindingFlags flags=BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic;
             foreach(var effect in camera.GetComponents<MonoBehaviour>()) {
                 if(effect==tail)break;
                 if(!effect || !effect.isActiveAndEnabled || effect is PostProcessLayer || effect is OutlineHighlight || effect is BlurOptimized)continue;
-                if(effect.GetType().GetMethod("OnRenderImage",flags)!=null)return effect.GetType().FullName;
+                if(ImageEffects.Is(effect))return effect.GetType().FullName;
             }
             return null;
         }

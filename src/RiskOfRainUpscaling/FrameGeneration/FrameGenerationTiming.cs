@@ -18,6 +18,8 @@ namespace RiskOfRainUpscaling
         private bool installed, disposed;
         private readonly ReflexFrameLimiter limiter;
         internal string LimiterStatus => limiter?.Status??"Unity limiter";
+        // Whether this frame requested Frame Generation; set at the frame's start, before rendering.
+        internal bool Requested { get; private set; }
         private string timingStatus;
         private double lastTime, windowStart, worstMs;
         private int intervals, firstSdkCount;
@@ -36,7 +38,8 @@ namespace RiskOfRainUpscaling
         {
             if(disposed)return;
             limiter?.Begin();
-            NativeApi.FrameGenerationSetEnabled(installed && eligible()?1:0);
+            Requested=installed && eligible();
+            NativeApi.FrameGenerationSetEnabled(Requested?1:0);
             NativeApi.FrameGenerationMarker(0,Time.frameCount);
             limiter?.AfterSleep();
             RecordPacing();
@@ -83,7 +86,7 @@ namespace RiskOfRainUpscaling
         }
         public void Dispose()
         {
-            if(disposed)return;disposed=true;limiter?.Dispose();NativeApi.FrameGenerationSetEnabled(0);
+            if(disposed)return;disposed=true;Requested=false;limiter?.Dispose();NativeApi.FrameGenerationSetEnabled(0);
             renderFrame.Release();
             if(!installed)return;
             var loop=PlayerLoop.GetCurrentPlayerLoop();Remove(ref loop);PlayerLoop.SetPlayerLoop(loop);installed=false;

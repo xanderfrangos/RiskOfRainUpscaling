@@ -385,14 +385,13 @@ namespace RiskOfRainUpscaling
         {
             // The overlay is IMGUI drawn after the HUD camera, outside the HUD opacity replay.
             if(overlay.Value)return "diagnostic overlay";
-            const System.Reflection.BindingFlags flags=System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
-            foreach(var effect in camera.GetComponents<MonoBehaviour>().Where(c=>c && c.isActiveAndEnabled)) {
-                var type=effect.GetType();
-                if(type.GetMethod("OnRenderImage",flags)==null)continue;
+            camera.GetComponents(hudComponents);
+            foreach(var effect in hudComponents) {
+                if(!effect || !effect.isActiveAndEnabled || !ImageEffects.Is(effect))continue;
                 // DamageIndicator blits unchanged color while it shows no indicator.
                 // A visible indicator or an unknown image effect cannot safely share
                 // our pre-effect HUD opacity.
-                if(!(effect is RoR2.PostProcessing.DamageIndicator damage))return "HUD image effect " + type.FullName;
+                if(!(effect is RoR2.PostProcessing.DamageIndicator damage))return "HUD image effect " + effect.GetType().FullName;
                 if(DamageIndicatorDraws(damage))return "visible DamageIndicator";
             }
             // Screen-space overlay canvases render outside this camera's pass. One whose
@@ -426,6 +425,7 @@ namespace RiskOfRainUpscaling
             foreach(var timestamp in timestamps)if(!(damageTimestampActive.GetValue(timestamp) is bool hitActive) || hitActive)return true;
             return false;
         }
+        private readonly List<MonoBehaviour> hudComponents=new List<MonoBehaviour>();
         private readonly List<UnityEngine.UI.Graphic> overlayGraphics=new List<UnityEngine.UI.Graphic>();
         // The first graphic that can change pixels on an overlay canvas, or null: enabled,
         // unculled, with nonzero color x renderer x CanvasGroup alpha.
@@ -444,9 +444,12 @@ namespace RiskOfRainUpscaling
         {
             if (active == null || !camera) return;
             if(camera==active.Hud){
-                var unsafeReason=HudOpacityUnsafe(camera);
-                bool safe=unsafeReason==null;
-                if(unsafeReason!=hudOpacityReason){
+                // Only Frame Generation's HUD capture reads this, and the scan walks every
+                // canvas: skip it on frames that do not request Frame Generation.
+                bool generating=fgTiming!=null && fgTiming.Requested;
+                var unsafeReason=generating?HudOpacityUnsafe(camera):null;
+                bool safe=generating && unsafeReason==null;
+                if(generating && unsafeReason!=hudOpacityReason){
                     Log(safe?"FRAME_GEN_HUD_OPACITY safe; measured HUD opacity available":"FRAME_GEN_HUD_OPACITY unsafe reason=" + unsafeReason + "; the UI layer uses the opaque difference mask");
                     hudOpacityReason=unsafeReason;
                 }

@@ -110,10 +110,14 @@ namespace RiskOfRainUpscaling
             Presentation.SetRenderTarget(BuiltinRenderTextureType.CameraTarget);
             Hud.AddCommandBuffer(CameraEvent.BeforeForwardOpaque,Presentation);
         }
+        private readonly List<MonoBehaviour> components = new List<MonoBehaviour>();
         internal bool TailIsLast()
         {
-            return Tail && Scene.GetComponents<MonoBehaviour>().Where(component => component && component.isActiveAndEnabled &&
-                component.GetType().GetMethod("OnRenderImage",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.Public|System.Reflection.BindingFlags.NonPublic)!=null).LastOrDefault()==Tail;
+            if(!Tail) return false;
+            MonoBehaviour last=null;
+            Scene.GetComponents(components);
+            foreach(var component in components) if(component && component.isActiveAndEnabled && ImageEffects.Is(component)) last=component;
+            return last==Tail;
         }
         internal void Restore()
         {
