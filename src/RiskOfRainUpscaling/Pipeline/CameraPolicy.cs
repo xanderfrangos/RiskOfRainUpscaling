@@ -25,5 +25,13 @@ namespace RiskOfRainUpscaling
             return sceneCamera && enabled && lobbyControllerInScene && !runActive &&
                    !renderTexture && fullViewport && active && gameCamera;
         }
+
+        // Intro cutscene: the menu camera rig in the intro scene, owned by its IntroCutsceneController.
+        internal static bool IsIntro(bool sceneCamera, bool enabled, bool introScene, bool introControllerInScene,
+            bool runActive, bool renderTexture, bool fullViewport, bool active, bool gameCamera)
+        {
+            return sceneCamera && enabled && introScene && introControllerInScene && !runActive &&
+                   !renderTexture && fullViewport && active && gameCamera;
+        }
     }
 }

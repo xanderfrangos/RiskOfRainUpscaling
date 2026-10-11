@@ -112,7 +112,7 @@ namespace RiskOfRainUpscaling
 
         internal bool ReconstructionCamera(Camera camera, bool menus) => CameraRole(camera,menus)!=null;
 
-        // Local gameplay, the title menu or character select; null for any other camera.
+        // Local gameplay, the title menu, character select or the intro cutscene; null for any other camera.
         internal string CameraRole(Camera camera, bool menus)
         {
             if(!camera)return null;
@@ -133,7 +133,23 @@ namespace RiskOfRainUpscaling
             if(CameraPolicy.IsCharacterSelect(sceneCamera,menus,lobby && lobby.isActiveAndEnabled && lobby.gameObject.scene==scene,
                 runActive,renderTexture,fullViewport,active,gameCamera))
                 return "character-select-scene";
+            if(CameraPolicy.IsIntro(sceneCamera,menus,scene.name=="intro",IntroController(scene),
+                runActive,renderTexture,fullViewport,active,gameCamera))
+                return "intro-cutscene";
             return null;
+        }
+
+        // IntroCutsceneController is not a singleton; search once per intro scene load.
+        private IntroCutsceneController intro;
+        private int introSearchedScene;
+        private bool IntroController(UnityEngine.SceneManagement.Scene scene)
+        {
+            if(scene.name!="intro")return false;
+            if(introSearchedScene!=scene.handle || (!intro && Time.frameCount%60==0)) {
+                introSearchedScene=scene.handle;
+                intro=FindObjectsOfType<IntroCutsceneController>().FirstOrDefault(c=>c.gameObject.scene==scene);
+            }
+            return intro && intro.isActiveAndEnabled && intro.gameObject.scene==scene;
         }
 
         internal void LogMessage(ModLogLevel severity, string message) => log.Write(severity, message);

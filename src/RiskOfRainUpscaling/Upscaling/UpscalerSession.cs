@@ -178,13 +178,13 @@ namespace RiskOfRainUpscaling
         internal void Prepare()
         {
             RestoreProjection(); preparedFrame=-1;
-            if(State<1 || !camera || camera.orthographic || camera.usePhysicalProperties) return;
+            if(State<1 || !camera || camera.orthographic) return;
             int frame=Time.frameCount;
             // A second render of the same scene camera is not another temporal frame.
             if(frame==previousFrame) return;
             DisableAA();
             original=camera.projectionMatrix; originalNonJittered=camera.nonJitteredProjectionMatrix;
-            customProjection=!Approximately(original,Matrix4x4.Perspective(camera.fieldOfView,camera.aspect,camera.nearClipPlane,camera.farClipPlane));
+            customProjection=!Approximately(original,ImplicitProjection());
             var gpu=GL.GetGPUProjectionMatrix(original,true);
             var currentVP=gpu*camera.worldToCameraMatrix;
             float now=Time.realtimeSinceStartup;
@@ -232,6 +232,16 @@ namespace RiskOfRainUpscaling
                     frame,previousFrame,reasons.ToString().Replace(", ","|"),elapsed,distance,angle,fovDelta,camera.fieldOfView,previousFov,resetCount,resetRun,longestResetRun,camera.GetInstanceID()));
             } else resetRun=0;
             previousVP=currentVP;previousPosition=p;previousRotation=camera.transform.rotation;previousFov=camera.fieldOfView;previousTime=now;previousFrame=frame;
+        }
+        // The projection Unity derives from the camera's own properties. Anything else was
+        // assigned by a script and is restored as-is; restoring an implicit one by assignment
+        // would freeze it (the intro's physical camera animates its focal length).
+        private Matrix4x4 ImplicitProjection()
+        {
+            if(!camera.usePhysicalProperties) return Matrix4x4.Perspective(camera.fieldOfView,camera.aspect,camera.nearClipPlane,camera.farClipPlane);
+            Camera.CalculateProjectionMatrixFromPhysicalProperties(out var physical,camera.focalLength,camera.sensorSize,camera.lensShift,
+                camera.nearClipPlane,camera.farClipPlane,new Camera.GateFitParameters(camera.gateFit,camera.aspect));
+            return physical;
         }
         internal void RestoreProjection()
         {

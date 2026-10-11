@@ -55,5 +55,14 @@ internal static class HistoryAndMenuTests
         }
         if(accepted!=1)throw new Exception("Character select camera rejected");
         Console.WriteLine("PASS: 256 character select combinations exclude missing ownership/lobby controller, active runs, foreign targets and partial viewports.");
+
+        accepted=0;
+        for(int bits=0;bits<512;bits++) {
+            bool B(int i)=>(bits&(1<<i))!=0;
+            bool result=CameraPolicy.IsIntro(B(0),B(1),B(2),B(3),B(4),B(5),B(6),B(7),B(8));
+            if(result) {++accepted;if(bits!=463)throw new Exception("Excluded intro camera accepted: "+bits);}
+        }
+        if(accepted!=1)throw new Exception("Intro cutscene camera rejected");
+        Console.WriteLine("PASS: 512 intro eligibility combinations exclude missing ownership/intro controller, active runs, other scenes, foreign targets and partial viewports.");
     }
 }

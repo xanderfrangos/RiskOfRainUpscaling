@@ -110,7 +110,7 @@ namespace RiskOfRainUpscaling
             if(active?.Session!=null && active.Session.State<0) {upscaling.Value=false;active.Session.Restore();LogError("UPSCALING_FALLBACK native failure; Off selected; camera/AA restored; see native.log. The Toggle Upscaling shortcut retries explicitly.");}
             if (attachFailed) return;
             var rigs = CameraRigController.readOnlyInstancesList.Where(r => r && r.sceneCam && plugin.ReconstructionCamera(r.sceneCam,mainMenu.Value)).ToArray();
-            if (rigs.Length != 1) { Detach("no single eligible gameplay/main-menu/character-select scene camera"); return; }
+            if (rigs.Length != 1) { Detach("no single eligible gameplay/main-menu/character-select/intro scene camera"); return; }
             var rig = rigs[0];
             if(rig.sceneCam.actualRenderingPath != RenderingPath.DeferredShading)
             { Detach("Scene inputs require the deferred scene path");return; }
@@ -119,8 +119,10 @@ namespace RiskOfRainUpscaling
                 rig.uiCam.gameObject.scene!=rig.sceneCam.gameObject.scene || rig.uiCam.depth<=rig.sceneCam.depth)
             { Detach("HUD unavailable or belongs to another render target/display"); return; }
             bool dlaa = upscaling.Value;
-            if(dlaa && (rig.sceneCam.orthographic || rig.sceneCam.usePhysicalProperties || QualitySettings.activeColorSpace!=ColorSpace.Linear))
-            {upscaling.Value=false;LogError("UPSCALING_FALLBACK upscaling requires a perspective camera and Linear color space.");dlaa=false;}
+            // A property of this camera, not a failure: skip it and keep the saved setting
+            // for the next eligible camera.
+            if(dlaa && (rig.sceneCam.orthographic || QualitySettings.activeColorSpace!=ColorSpace.Linear))
+            { Block("Upscaling requires a perspective camera and Linear color space; camera " + rig.sceneCam.name + " in scene " + rig.sceneCam.gameObject.scene.name + " left unmodified."); return; }
             var dlss = dlaa ? quality.Value : DlssQuality.DLAA;
             bool low = dlaa && dlss != DlssQuality.DLAA;
             if (low && !WorldRoutingPolicy.CanRoute(true, true, rig.sceneCam.targetTexture && !OwnsTarget(rig.sceneCam), rig.uiCam.targetTexture,

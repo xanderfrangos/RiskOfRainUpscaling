@@ -13,7 +13,7 @@ Covers the D3D12 presentation bridge, DLSS Frame Generation (2x–6x), the Refle
 | `Backend` | Auto | Auto, DLSS, FSR. Restart. |
 | `ReflexFrameLimiter` | true | Replace the game's `fps_max` limiter with frame-start Reflex pacing plus a native interval guard while upscaling is on. |
 
-Generation requires upscaling, windowed/borderless presentation, hardware-accelerated GPU scheduling, same-frame scene inputs, and eligible focused gameplay or the title menu. It suspends (`FRAME_GEN_SUSPENDED`) during menus, loading, pause, resize and missing inputs.
+Generation requires upscaling, windowed/borderless presentation, hardware-accelerated GPU scheduling, same-frame scene inputs, and eligible focused gameplay, the intro cutscene, the title menu or character select. It suspends (`FRAME_GEN_SUSPENDED`) during menus, loading, pause, resize and missing inputs.
 
 ## How it works
 

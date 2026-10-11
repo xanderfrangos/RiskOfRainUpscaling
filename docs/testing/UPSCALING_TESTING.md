@@ -14,7 +14,7 @@ All in `BepInEx/config/xanderfrangos.riskofrainupscaling.cfg`, `[Upscaling]` (Mo
 | `DLSS Preset` | Default | Default (NVIDIA per mode: K for DLAA/Quality/Balanced, M Performance, L Ultra Performance), K, M, L, J (transformer) or E (CNN, cheapest). DLSS only. Applies next frame with a history reset. |
 | `Sharpening` | 0.7 | RCAS strength 0–1; 0 disables. Live, without a history reset. |
 | `MipBiasOffset` | −1 | −2 to 0, added to log2(render/display) below 100%. Raise toward 0 if fine textures shimmer. |
-| `MainMenu` | true | Upscale (and allow Frame Generation on) the title/main-menu and character select scene cameras. |
+| `MainMenu` | true | Upscale (and allow Frame Generation on) the intro cutscene, title/main-menu and character select scene cameras. |
 
 ## How it works
 
@@ -35,7 +35,7 @@ All in `BepInEx/config/xanderfrangos.riskofrainupscaling.cfg`, `[Upscaling]` (Mo
 
 **History.** Resets happen on the first frame, skipped frames, gaps over 0.5 s, position jumps over 5 units, rotations over 45°, and FOV steps greater than both 5° and 180°/s (`max(5, elapsedSeconds × 180)`). Gradual sprint/zoom FOV changes keep history, the real previous projection and the jitter sequence. `HISTORY_RESET` logs each reset with its reasons.
 
-**Main menu.** The `title` scene's registered scene camera is accepted without a player body when the title scene, an active menu controller in that scene, no active run, a full viewport and exactly one eligible rig are present. Character select (the `lobby` scene) is accepted the same way when the lobby's `PreGameController` is active in the camera's scene and no run exists. Menu UI renders afterward. Intro, splash, loading, spectator and preview cameras stay excluded.
+**Main menu.** The `title` scene's registered scene camera is accepted without a player body when the title scene, an active menu controller in that scene, no active run, a full viewport and exactly one eligible rig are present. Character select (the `lobby` scene) is accepted the same way when the lobby's `PreGameController` is active in the camera's scene and no run exists. The intro cutscene (the `intro` scene) is accepted the same way when its `IntroCutsceneController` is active in the camera's scene; its subtitles, letterbox and fade are a screen-space overlay canvas, so Frame Generation uses the opaque difference mask there (`FRAME_GEN_HUD_OPACITY unsafe reason=screen-space overlay canvas Canvas`). Menu UI renders afterward. Splash, loading, spectator and preview cameras stay excluded.
 
 ## Automated coverage
 
@@ -62,7 +62,7 @@ The game-only parts (display-sized PPv2 rebuild, the outline/blur rerun, recorde
    - The pause/menu blur still appears.
 4. Change **Sharpening** between 0, 0.2 and 1 on the same scene: fine edges and foliage change, HUD/menu text does not, no history reset (`RCAS_CHANGED`).
 5. Sprint and zoom repeatedly at a 30 FPS cap: no trails or distortion during FOV changes; `HISTORY_SUMMARY` at detach reports retained FOV frames, and Debug shows `HISTORY_FOV_CONTINUITY` with a non-identity previous mapping.
-6. Return to the title menu: managed.log `PIPELINE_ATTACHED role=main-menu-scene sceneName=title`; the background animation and edges look right; F10 and F7 work; open character select: `PIPELINE_ATTACHED role=character-select-scene sceneName=lobby`; survivor models and the background are reconstructed, the character select UI stays sharp and in place, and Frame Generation runs; set `MainMenu = false` and relaunch to confirm gameplay-only.
+6. Return to the title menu: managed.log `PIPELINE_ATTACHED role=main-menu-scene sceneName=title`; the background animation and edges look right; F10 and F7 work; open character select: `PIPELINE_ATTACHED role=character-select-scene sceneName=lobby`; survivor models and the background are reconstructed, the character select UI stays sharp and in place, and Frame Generation runs; set `MainMenu = false` and relaunch to confirm gameplay-only. For the intro, set `intro_skip 0` in the console and relaunch: managed.log `PIPELINE_ATTACHED role=intro-cutscene sceneName=intro`; the ship interior is reconstructed with no ghosting across camera cuts (`HISTORY_RESET` at each cut), subtitles and the letterbox stay sharp and in place, and Frame Generation runs; the pipeline reattaches as `main-menu-scene` when the title loads.
 7. Return to DLAA with F7 and Off with F10: the original image, anti-aliasing and texture sharpness return.
 8. Watch for `UPSCALER_EVENT_FAILED`, `UPSCALER_FALLBACK_FAILED`, `UPSCALING_FALLBACK`, `cannot run at display size`, `Display-sized post-processing setup failed`, `OUTLINES_FAILED`, `TEMPORAL_OUTLINES_FAILED` and `FULL_RESOLUTION_OUTLINES_FAILED`.
 
