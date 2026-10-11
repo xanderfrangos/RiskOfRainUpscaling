@@ -16,7 +16,7 @@ void FrameGenerationCreateDisplay(ID3D12Device*, IDXGIFactory2*, HWND, const DXG
 // After the bridge drained its GPU work, before it releases the display swap chain.
 void FrameGenerationReleaseDisplay();
 // Depth/motion use the final two arguments (render size); HUD-less color uses the display size.
-bool FrameGenerationPrepare(const CameraFrame&, ID3D12Resource*, ID3D12Resource*, ID3D12Resource*, ID3D12Resource*, const DXGI_SWAP_CHAIN_DESC1&, UINT, UINT, UINT);
+bool FrameGenerationPrepare(const CameraFrame&, ID3D12Resource*, ID3D12Resource*, ID3D12Resource*, ID3D12Resource*, const DXGI_SWAP_CHAIN_DESC1&, UINT, UINT, UINT, const DisplayRect&);
 void FrameGenerationOff(const char*);
 void FrameGenerationPresentMarker(bool, int);
 bool FrameGenerationAfterPresent(FrameGenerationPresented&);

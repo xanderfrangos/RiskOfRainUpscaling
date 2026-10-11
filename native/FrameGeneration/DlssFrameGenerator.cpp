@@ -202,7 +202,9 @@ public:
         c.reset=(packet.reset || !enabled)?sl::Boolean::eTrue:sl::Boolean::eFalse;c.motionVectors3D=sl::Boolean::eFalse;
         c.motionVectorsJittered=c.motionVectorsDilated=sl::Boolean::eFalse;
         RequireF(constants(c,*current,viewport),"FG common constants");
-        sl::Extent extent{};extent.width=desc.Width;extent.height=desc.Height;
+        // Backbuffer subrect: the game image Unity scales into the chain. HUD-less and UI
+        // alpha are display-sized with the same extent; outside it SL copies the backbuffer.
+        sl::Extent extent{};extent.left=request.content.left;extent.top=request.content.top;extent.width=request.content.width;extent.height=request.content.height;
         sl::Extent render{};render.width=request.renderWidth;render.height=request.renderHeight;
         sl::Resource d{sl::ResourceType::eTex2d,request.depth,nullptr,nullptr,D3D12_RESOURCE_STATE_COMMON};
         sl::Resource m{sl::ResourceType::eTex2d,request.motion,nullptr,nullptr,D3D12_RESOURCE_STATE_COMMON};

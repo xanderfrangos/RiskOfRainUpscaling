@@ -58,7 +58,8 @@ try {
         Copy-Item -LiteralPath 'build\test-results\native.log' -Destination 'build\test-results\frame-generation-ui.log' -Force
         Copy-Item -LiteralPath 'build\test-results\FrameGeneration\sl.log' -Destination 'build\test-results\frame-generation-ui-sl.log' -Force
         # The game's HUD camera draws into a RenderTexture (bottom-up rows on D3D); every HUD-less consumer must see top-down rows.
-        foreach($arguments in @(@('--fg','--visible','--hud-render-texture'),@('--fg','--visible','--ui-recomposition','--hud-render-texture'),@('--fg','--visible','--fsr','--hud-render-texture'),@('--fg','--visible','--fsr','--ui-recomposition','--hud-render-texture'),@('--fg','--visible','--hud-hdr-target'),@('--fg','--visible','--fsr','--hud-hdr-target'))){
+        # --display-scale: Unity scales a smaller game resolution into the window (letterbox); FG runs on that rectangle.
+        foreach($arguments in @(@('--fg','--visible','--hud-render-texture'),@('--fg','--visible','--ui-recomposition','--hud-render-texture'),@('--fg','--visible','--fsr','--hud-render-texture'),@('--fg','--visible','--fsr','--ui-recomposition','--hud-render-texture'),@('--fg','--visible','--hud-hdr-target'),@('--fg','--visible','--fsr','--hud-hdr-target'),@('--fg','--visible','--display-scale'),@('--fg','--visible','--fsr','--display-scale'),@('--fg','--visible','--fsr','--fsr-upscaler','--display-scale'))){
             & 'build\native-nmake\RiskOfRainUpscaling.PipelineTests.exe' @arguments
             if($LASTEXITCODE -ne 0){throw "Frame Generation RenderTexture HUD target test failed ($($arguments -join ' ')), exit=$LASTEXITCODE"}
         }

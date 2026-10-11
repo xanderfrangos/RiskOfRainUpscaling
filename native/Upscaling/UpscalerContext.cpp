@@ -295,7 +295,7 @@ static void __stdcall EvaluateEvent(int event, void* pointer) {
             ProfileScope p(PROFILE_LABEL("fg.inputConvert (depth + motion flip)"));
             Convert(*c,c->depthView.Get(),c->fgDepthTarget.Get(),c->fgDepthShader.Get());
             Convert(*c,c->motionView.Get(),c->fgMotionTarget.Get(),c->fgMotionShader.Get());
-            FrameBridgeSubmitInputs(FrameGenerationPacket(f),c->fgDepth.Get(),c->fgMotion.Get());
+            FrameBridgeSubmitInputs(FrameGenerationPacket(f),c->fgDepth.Get(),c->fgMotion.Get(),c->desc.outputWidth,c->desc.outputHeight);
         }
         c->lastFrame=event; ++c->evaluations; c->state=2;
         c->resetRun=reset?c->resetRun+1:0;

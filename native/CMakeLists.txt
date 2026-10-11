@@ -29,7 +29,7 @@ compile_shader(Upscaling/Rcas.hlsl ps_5_0 Rcas)
 compile_shader(Upscaling/Outlines.hlsl ps_5_0 OutlineUpscale OutlineWeightInput OutlineResolve OutlineResolveFallback OutlineComposite OutlineOcclusionDepth OutlineSobelDepth OutlineSobel)
 compile_shader(FrameGeneration/FrameGenerationInputs.hlsl ps_5_0 FgDepthInput FgMotionInput)
 compile_shader(FrameGeneration/HudOpacity.hlsl ps_5_0 UiAlpha UiAlphaFlipped)
-compile_shader(FrameGeneration/UiLayer.hlsl ps_5_0 UiLayer UiMask FlipRows)
+compile_shader(FrameGeneration/UiLayer.hlsl ps_5_0 UiLayer UiMask FlipRows Letterbox)
 compile_shader(../tests/native/HudFixture.hlsl ps_5_0 HudFixture)
 
 set(CORE_SOURCES Core/Native.cpp Core/FullscreenPass.cpp Core/FfxRuntime.cpp)

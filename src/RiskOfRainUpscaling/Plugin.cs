@@ -47,7 +47,6 @@ namespace RiskOfRainUpscaling
                         value => RoR2.Console.instance.FindConVar("fps_max").SetString(value));
                     UpscalerBackend Resolved() => pipeline?.ResolvedUpscaler ?? DlssPolicy.Resolve(settings.Upscaler.Value, 0, SystemInfo.graphicsDeviceVendorID == DlssPolicy.NvidiaVendorId);
                     RiskOfOptionsIntegration.Register(settings, frameRate,
-                        () => Resolved() == UpscalerBackend.FSR,
                         () => settings.Upscaling.Value && Resolved() == UpscalerBackend.DLSS,
                         message => LogMessage(ModLogLevel.Warning, message));
                     IsBindingHotkey = RiskOfOptionsIntegration.IsBindingHotkey;

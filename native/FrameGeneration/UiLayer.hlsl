@@ -21,6 +21,17 @@ float4 FlipRows(Vertex v) : SV_Target
     uint width, height; finalColor.GetDimensions(width, height);
     return finalColor.Load(int3(v.position.x, int(height) - 1 - int(v.position.y), 0));
 }
+// When Unity scales the game image into part of a larger swap chain, game-sized
+// images are placed the same way: bilinear at pixel centres like a blit (an exact
+// copy at 1:1), and zero (black, or transparent UI) outside the game image.
+cbuffer Placement : register(b0) { float4 gameRect; } // left, top, width, height in display pixels
+SamplerState linearClamp : register(s0);
+float4 Letterbox(Vertex v) : SV_Target
+{
+    float2 uv = (v.position.xy - gameRect.xy) / gameRect.zw;
+    if (any(uv < 0) || any(uv >= 1)) return 0;
+    return finalColor.SampleLevel(linearClamp, uv, 0);
+}
 // Without measured opacity, every pixel the HUD changed is opaque UI. Unchanged
 // pixels are discarded onto the cleared layer, so an occlusion query counts the
 // opaque coverage.

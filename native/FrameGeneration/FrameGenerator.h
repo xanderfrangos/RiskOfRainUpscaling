@@ -1,5 +1,6 @@
 #pragma once
 #include "Core/CameraFrame.h"
+#include "FrameGeneration/FrameGenerationSpace.h"
 #include "Core/Native.h"
 #include <memory>
 
@@ -13,6 +14,7 @@ struct FrameGenerationRequest {
     const DXGI_SWAP_CHAIN_DESC1& desc;
     UINT interval, renderWidth, renderHeight;
     int multiplier;            // Requested total frames per rendered frame (2–6)
+    DisplayRect content;       // The game image in the swap chain; depth/motion map onto it. Full chain unless Unity scales.
 };
 // The runtime's report after the display Present.
 struct FrameGenerationPresented {

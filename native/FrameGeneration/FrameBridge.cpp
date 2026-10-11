@@ -6,6 +6,7 @@
 #include "shaders/UiLayer.h"
 #include "shaders/UiMask.h"
 #include "shaders/FlipRows.h"
+#include "shaders/Letterbox.h"
 #include <array>
 #include <memory>
 #include <mutex>
@@ -119,6 +120,28 @@ struct BridgeHandle {
     HANDLE value{};
     ~BridgeHandle(){if(value && value!=INVALID_HANDLE_VALUE)CloseHandle(value);}
 };
+// An RGBA8 image in typeless storage: UNORM view and target, plus an sRGB target to
+// encode float sources the way Unity's blit to the linear-space swap chain does.
+struct GameImage {
+    ComPtr<ID3D11Texture2D> texture;
+    ComPtr<ID3D11ShaderResourceView> view;
+    ComPtr<ID3D11RenderTargetView> target,srgbTarget;
+    UINT width=0,height=0;
+    void Create(ID3D11Device* device,UINT w,UINT h,const char* name){
+        Reset();
+        D3D11_TEXTURE2D_DESC d{};d.Width=w;d.Height=h;d.MipLevels=d.ArraySize=1;d.Format=DXGI_FORMAT_R8G8B8A8_TYPELESS;d.SampleDesc.Count=1;
+        d.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
+        RequireBridge(device->CreateTexture2D(&d,nullptr,&texture),name);
+        D3D11_SHADER_RESOURCE_VIEW_DESC sd{};sd.Format=DXGI_FORMAT_R8G8B8A8_UNORM;sd.ViewDimension=D3D11_SRV_DIMENSION_TEXTURE2D;sd.Texture2D.MipLevels=1;
+        RequireBridge(device->CreateShaderResourceView(texture.Get(),&sd,&view),name);
+        D3D11_RENDER_TARGET_VIEW_DESC rd{};rd.Format=DXGI_FORMAT_R8G8B8A8_UNORM;rd.ViewDimension=D3D11_RTV_DIMENSION_TEXTURE2D;
+        RequireBridge(device->CreateRenderTargetView(texture.Get(),&rd,&target),name);
+        rd.Format=DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+        RequireBridge(device->CreateRenderTargetView(texture.Get(),&rd,&srgbTarget),name);
+        width=w;height=h;
+    }
+    void Reset(){texture.Reset();view.Reset();target.Reset();srgbTarget.Reset();width=height=0;}
+};
 struct BridgeSlot {
     ComPtr<ID3D11Texture2D> shared11;
     ComPtr<ID3D12Resource> shared12, backbuffer;
@@ -135,6 +158,7 @@ struct BridgeSlot {
     ComPtr<ID3D12Resource> layer12;
     ComPtr<ID3D11ShaderResourceView> finalView;
     ComPtr<ID3D11RenderTargetView> layerView;
+    ComPtr<ID3D11RenderTargetView> sharedTarget,hudlessTarget,uiTarget; // Placement of game-sized images when Unity scales.
     ComPtr<ID3D11Query> coverage; // Occlusion query: opaque difference-mask pixels.
     bool coveragePending=false;
     ComPtr<ID3D12Fence> fgFence;
@@ -159,17 +183,27 @@ struct BridgeGpu {
     ComPtr<ID3D11Fence> produced11;
     BridgeHandle event;
     ComPtr<ID3D11Texture2D> producer;
-    ComPtr<ID3D11Texture2D> hudless;
-    // A bottom-up HUD target is copied here, then flipped into hudless.
-    ComPtr<ID3D11Texture2D> hudlessRows;
-    ComPtr<ID3D11ShaderResourceView> hudlessRowsView;
-    ComPtr<ID3D11RenderTargetView> hudlessTarget;
+    // Game-sized images: the swap chain's size unless Unity scales a smaller game
+    // resolution into it (GameRect). hudless is the exact pre-HUD snapshot; finalGame
+    // Unity's final image at game size when it scales; layerGame the UI layer there.
+    GameImage hudless,finalGame,layerGame;
+    // Bottom-up or float sources are copied here (RGBA8 bytes, or RGBA16F), then drawn top-down.
+    ComPtr<ID3D11Texture2D> rows,floatRows;
+    ComPtr<ID3D11ShaderResourceView> rowsView,floatRowsView;
+    // Unity's game-sized screen buffer this frame (only while it scales), and its probed row order.
+    ComPtr<ID3D11Texture2D> gameBuffer;
+    bool gameBufferFloat=false,probedFloat=false,gameBufferBottomUp=false,gameBufferUsable=false;
+    const void* probedBuffer=nullptr; // Never dereferenced.
+    const void* inconclusiveBuffer=nullptr; // Logging only.
     std::unique_ptr<HudOpacity> opacity;
     bool opacityUnavailable=false;
     ComPtr<ID3DDeviceContextState> layerState;
     ComPtr<ID3D11VertexShader> layerVertex;
-    ComPtr<ID3D11PixelShader> layerPixel,maskPixel,flipPixel;
-    ComPtr<ID3D11ShaderResourceView> hudlessView,opacityView;
+    ComPtr<ID3D11PixelShader> layerPixel,maskPixel,flipPixel,letterboxPixel;
+    ComPtr<ID3D11Buffer> placementConstants;
+    ComPtr<ID3D11SamplerState> linearClamp;
+    ComPtr<ID3D11Query> probeQuery;
+    ComPtr<ID3D11ShaderResourceView> opacityView;
     ID3D11Texture2D* opacityViewSource=nullptr; // The view holds a reference, so the address stays unique.
     bool layerUnavailable=false;
     int layerSource=-1,layerLogs=0; // Logging only.
@@ -178,7 +212,7 @@ struct BridgeGpu {
     // is used instead; the mask is still measured so the layer can return.
     bool layerCovering=false;
     int coverageHigh=0,coverageLow=0,coverageSamples=0,coverageReports=0;
-    double coverageSum=0,coverageMax=0;
+    double coverageSum=0,coverageMax=0,coverageArea=1;
     bool coverageDumped=false;
     ComPtr<ViewToken> views;
     ComPtr<ID3D12Resource> pendingReadback;
@@ -240,7 +274,6 @@ struct BridgeGpu {
         views.Attach(new ViewToken());
         RequireBridge(producer->SetPrivateDataInterface(producerViewToken,views.Get()),"Producer-view lifetime token");
         hasImage=false;
-        if(fg){p.Format=DXGI_FORMAT_R8G8B8A8_UNORM;RequireBridge(device11->CreateTexture2D(&p,nullptr,&hudless),"Exact before-HUD snapshot");}
         for(UINT i=0;i<desc.BufferCount;++i){
             auto& slot=slots[i];p.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
             p.MiscFlags=D3D11_RESOURCE_MISC_SHARED|D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
@@ -291,7 +324,7 @@ struct BridgeGpu {
         UINT64 pixels=0;
         if(!slot.coveragePending || context11->GetData(slot.coverage.Get(),&pixels,sizeof(pixels),D3D11_ASYNC_GETDATA_DONOTFLUSH)!=S_OK)return;
         slot.coveragePending=false;
-        const double share=static_cast<double>(pixels)/(static_cast<double>(desc.Width)*desc.Height);
+        const double share=static_cast<double>(pixels)/coverageArea;
         coverageSum+=share;coverageMax=std::max(coverageMax,share);++coverageSamples;
         coverageHigh=share>=.5?coverageHigh+1:0;coverageLow=share<.25?coverageLow+1:0;
         if(!layerCovering && coverageHigh>=8){
@@ -314,14 +347,14 @@ struct BridgeGpu {
     // final image, the HUD-less snapshot and their per-pixel differences, to identify
     // what changes pixels outside the HUD. Synchronous readback and ~44 MB of files
     // on the render thread, so never at the default logging level.
-    void DumpCoverage(BridgeSlot& slot){
+    void DumpCoverage(ID3D11Texture2D* finalSource){
         coverageDumped=true;
-        D3D11_TEXTURE2D_DESC d{};slot.shared11->GetDesc(&d);
+        D3D11_TEXTURE2D_DESC d{};hudless.texture->GetDesc(&d);
         d.Usage=D3D11_USAGE_STAGING;d.BindFlags=0;d.MiscFlags=0;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
         ComPtr<ID3D11Texture2D> finalCopy,hudlessCopy;
         D3D11_MAPPED_SUBRESOURCE a{},b{};
         if(FAILED(device11->CreateTexture2D(&d,nullptr,&finalCopy)) || FAILED(device11->CreateTexture2D(&d,nullptr,&hudlessCopy))){Log(ModLogLevel::Warning,"FRAME_GEN_UI_LAYER_DUMP_FAILED staging textures");return;}
-        context11->CopyResource(finalCopy.Get(),slot.shared11.Get());context11->CopyResource(hudlessCopy.Get(),hudless.Get());
+        context11->CopyResource(finalCopy.Get(),finalSource);context11->CopyResource(hudlessCopy.Get(),hudless.texture.Get());
         if(FAILED(context11->Map(finalCopy.Get(),0,D3D11_MAP_READ,0,&a))){Log(ModLogLevel::Warning,"FRAME_GEN_UI_LAYER_DUMP_FAILED map");return;}
         if(FAILED(context11->Map(hudlessCopy.Get(),0,D3D11_MAP_READ,0,&b))){context11->Unmap(finalCopy.Get(),0);Log(ModLogLevel::Warning,"FRAME_GEN_UI_LAYER_DUMP_FAILED map");return;}
         const UINT width=d.Width,height=d.Height;
@@ -354,10 +387,7 @@ struct BridgeGpu {
         const bool written=WriteBmp(folder/L"final.bmp",width,height,finalImage) && WriteBmp(folder/L"hudless.bmp",width,height,hudlessImage) && WriteBmp(folder/L"difference-x32.bmp",width,height,diffImage);
         Log("FRAME_GEN_UI_LAYER_DUMP folder=%ls written=%d (final.bmp, hudless.bmp, difference-x32.bmp: largest RGB delta x32)",folder.c_str(),written);
     }
-    // The HUD over the HUD-less image, as premultiplied color: exact with measured
-    // HUD opacity, otherwise every changed pixel as opaque UI. The final image is
-    // read from the slot copy, never through a producer view.
-    // Private context state and shaders for the bridge's full-screen passes.
+    // Private context state, shaders and states for the bridge's full-screen passes.
     void LayerShaders(){
         if(layerState)return;
         ComPtr<ID3D11Device1> device1;RequireBridge(device11.As(&device1),"D3D11.1 device");
@@ -367,60 +397,158 @@ struct BridgeGpu {
         RequireBridge(device11->CreatePixelShader(UiLayerShader,sizeof(UiLayerShader),nullptr,&layerPixel),"UI layer shader");
         RequireBridge(device11->CreatePixelShader(UiMaskShader,sizeof(UiMaskShader),nullptr,&maskPixel),"UI mask shader");
         RequireBridge(device11->CreatePixelShader(FlipRowsShader,sizeof(FlipRowsShader),nullptr,&flipPixel),"HUD-less row flip shader");
+        RequireBridge(device11->CreatePixelShader(LetterboxShader,sizeof(LetterboxShader),nullptr,&letterboxPixel),"Game image placement shader");
+        D3D11_BUFFER_DESC b{};b.ByteWidth=16;b.Usage=D3D11_USAGE_DEFAULT;b.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+        RequireBridge(device11->CreateBuffer(&b,nullptr,&placementConstants),"Game image placement constants");
+        D3D11_SAMPLER_DESC sd{};sd.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;sd.AddressU=sd.AddressV=sd.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;sd.MaxLOD=D3D11_FLOAT32_MAX;
+        RequireBridge(device11->CreateSamplerState(&sd,&linearClamp),"Game image placement sampler");
     }
-    // The pre-HUD image in swap-chain (top-down) rows. Unity renders a HUD camera
-    // with an image effect into a RenderTexture, whose rows are bottom-up on D3D.
-    void SnapshotHudless(ID3D11Texture2D* source,bool bottomUp){
-        if(!bottomUp){context11->CopyResource(hudless.Get(),source);return;}
+    // One full-screen pass in the private state over width x height of target, with
+    // inputs at t0.. and, for placement, the game rectangle and a linear sampler.
+    void Draw(ID3D11PixelShader* pixel,ID3D11ShaderResourceView* const* inputs,UINT inputCount,ID3D11RenderTargetView* target,UINT width,UINT height,
+        ID3D11Query* query=nullptr,const DisplayRect* placement=nullptr){
         LayerShaders();
-        if(!hudlessRows){
-            D3D11_TEXTURE2D_DESC d{};hudless->GetDesc(&d);
-            RequireBridge(device11->CreateTexture2D(&d,nullptr,&hudlessRows),"HUD-less row copy");
-            RequireBridge(device11->CreateShaderResourceView(hudlessRows.Get(),nullptr,&hudlessRowsView),"HUD-less row copy view");
-            RequireBridge(device11->CreateRenderTargetView(hudless.Get(),nullptr,&hudlessTarget),"HUD-less target");
-        }
-        context11->CopyResource(hudlessRows.Get(),source); // Raw bytes, like the unflipped copy.
-        ComPtr<ID3DDeviceContextState> previous;context11->SwapDeviceContextState(layerState.Get(),&previous);
-        auto target=hudlessTarget.Get();context11->OMSetRenderTargets(1,&target,nullptr);
-        D3D11_VIEWPORT vp{0,0,static_cast<float>(desc.Width),static_cast<float>(desc.Height),0,1};context11->RSSetViewports(1,&vp);
-        context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        context11->VSSetShader(layerVertex.Get(),nullptr,0);context11->PSSetShader(flipPixel.Get(),nullptr,0);
-        auto input=hudlessRowsView.Get();context11->PSSetShaderResources(0,1,&input);context11->Draw(3,0);
-        ID3D11ShaderResourceView* none=nullptr;context11->PSSetShaderResources(0,1,&none);
-        ID3D11RenderTargetView* noTarget=nullptr;context11->OMSetRenderTargets(1,&noTarget,nullptr);
-        context11->SwapDeviceContextState(previous.Get(),nullptr);
-    }
-    void ComposeUi(BridgeSlot& slot,ID3D11Texture2D* hudOpacity){
-        if(layerCovering && !coverageDumped && LogEnabled(ModLogLevel::Debug))DumpCoverage(slot);
-        LayerShaders();
-        if(!hudlessView)RequireBridge(device11->CreateShaderResourceView(hudless.Get(),nullptr,&hudlessView),"UI layer HUD-less view");
-        if(!slot.finalView)RequireBridge(device11->CreateShaderResourceView(slot.shared11.Get(),nullptr,&slot.finalView),"UI layer final view");
-        if(!slot.layerView)RequireBridge(device11->CreateRenderTargetView(slot.layer11.Get(),nullptr,&slot.layerView),"UI layer target");
-        if(hudOpacity && hudOpacity!=opacityViewSource){
-            opacityView.Reset();opacityViewSource=nullptr;
-            RequireBridge(device11->CreateShaderResourceView(hudOpacity,nullptr,&opacityView),"UI layer opacity view");
-            opacityViewSource=hudOpacity;
+        if(placement){
+            const float rect[4]{static_cast<float>(placement->left),static_cast<float>(placement->top),static_cast<float>(placement->width),static_cast<float>(placement->height)};
+            context11->UpdateSubresource(placementConstants.Get(),0,nullptr,rect,0,0);
         }
         ComPtr<ID3DDeviceContextState> previous;context11->SwapDeviceContextState(layerState.Get(),&previous);
-        auto target=slot.layerView.Get();context11->OMSetRenderTargets(1,&target,nullptr);
-        const bool measure=!hudOpacity;
-        if(measure){
-            ReadCoverage(slot);
-            if(!slot.coverage){D3D11_QUERY_DESC q{D3D11_QUERY_OCCLUSION,0};RequireBridge(device11->CreateQuery(&q,&slot.coverage),"UI layer coverage query");}
-            const float clear[4]{};context11->ClearRenderTargetView(target,clear); // The mask discards unchanged pixels.
-        }
-        const bool counting=measure && !slot.coveragePending;
-        if(counting)context11->Begin(slot.coverage.Get());
-        D3D11_VIEWPORT vp{0,0,static_cast<float>(desc.Width),static_cast<float>(desc.Height),0,1};context11->RSSetViewports(1,&vp);
+        context11->OMSetRenderTargets(1,&target,nullptr);
+        D3D11_VIEWPORT vp{0,0,static_cast<float>(width),static_cast<float>(height),0,1};context11->RSSetViewports(1,&vp);
         context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        context11->VSSetShader(layerVertex.Get(),nullptr,0);context11->PSSetShader(hudOpacity?layerPixel.Get():maskPixel.Get(),nullptr,0);
-        ID3D11ShaderResourceView* inputs[3]{slot.finalView.Get(),hudlessView.Get(),hudOpacity?opacityView.Get():nullptr};
-        context11->PSSetShaderResources(0,3,inputs);context11->Draw(3,0);
-        if(counting){context11->End(slot.coverage.Get());slot.coveragePending=true;}
+        context11->VSSetShader(layerVertex.Get(),nullptr,0);context11->PSSetShader(pixel,nullptr,0);
+        if(placement){auto c=placementConstants.Get();context11->PSSetConstantBuffers(0,1,&c);auto sampler=linearClamp.Get();context11->PSSetSamplers(0,1,&sampler);}
+        context11->PSSetShaderResources(0,inputCount,inputs);
+        if(query)context11->Begin(query);
+        context11->Draw(3,0);
+        if(query)context11->End(query);
         // Leave no bindings in the private state: these textures are copied into every frame.
         ID3D11ShaderResourceView* none[3]{};context11->PSSetShaderResources(0,3,none);
         ID3D11RenderTargetView* noTarget=nullptr;context11->OMSetRenderTargets(1,&noTarget,nullptr);
         context11->SwapDeviceContextState(previous.Get(),nullptr);
+    }
+    // A game-sized image placed where Unity scales the game into the swap chain.
+    void Place(ID3D11ShaderResourceView* source,ID3D11RenderTargetView* target,const DisplayRect& rect){
+        Draw(letterboxPixel.Get(),&source,1,target,desc.Width,desc.Height,nullptr,&rect);
+    }
+    ID3D11RenderTargetView* SlotTarget(ComPtr<ID3D11RenderTargetView>& view,ID3D11Texture2D* texture){
+        if(!view)RequireBridge(device11->CreateRenderTargetView(texture,nullptr,&view),"Slot placement target");
+        return view.Get();
+    }
+    ID3D11ShaderResourceView* OpacityView(ID3D11Texture2D* hudOpacity){
+        if(!hudOpacity)return nullptr;
+        if(hudOpacity!=opacityViewSource){
+            opacityView.Reset();opacityViewSource=nullptr;
+            RequireBridge(device11->CreateShaderResourceView(hudOpacity,nullptr,&opacityView),"UI layer opacity view");
+            opacityViewSource=hudOpacity;
+        }
+        return opacityView.Get();
+    }
+    // Game-sized images follow Unity's game resolution, which equals the swap chain
+    // unless Unity scales a smaller game image into it.
+    void GameImages(UINT width,UINT height){
+        if(hudless.width==width && hudless.height==height)return;
+        hudless.Create(device11.Get(),width,height,"Exact before-HUD snapshot");
+        finalGame.Create(device11.Get(),width,height,"Game-sized final image");
+        layerGame.Create(device11.Get(),width,height,"Game-sized UI layer");
+        rows.Reset();rowsView.Reset();floatRows.Reset();floatRowsView.Reset();
+        opacity.reset();opacityView.Reset();opacityViewSource=nullptr;
+        layerCovering=false;coverageHigh=coverageLow=coverageSamples=0;coverageSum=coverageMax=0;
+        probedBuffer=nullptr;
+    }
+    // A game-sized source as destination's top-down 8-bit bytes. Unity renders into
+    // RenderTextures bottom-up on D3D. Float (RGBA16F) targets are written to the
+    // linear-space swap chain through an sRGB view, so the same hardware encoding is
+    // used here; RGBA8 bytes are copied unchanged.
+    void ConvertInto(GameImage& destination,ID3D11Texture2D* source,bool bottomUp,bool floatSource){
+        if(!bottomUp && !floatSource){context11->CopyResource(destination.texture.Get(),source);return;}
+        LayerShaders();
+        D3D11_TEXTURE2D_DESC d{};destination.texture->GetDesc(&d);
+        const UINT width=d.Width,height=d.Height;
+        if(!floatSource && !rows){
+            d.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
+            RequireBridge(device11->CreateTexture2D(&d,nullptr,&rows),"Row copy");
+            RequireBridge(device11->CreateShaderResourceView(rows.Get(),nullptr,&rowsView),"Row copy view");
+        }
+        if(floatSource && !floatRows){
+            d.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;d.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+            RequireBridge(device11->CreateTexture2D(&d,nullptr,&floatRows),"Float row copy");
+            RequireBridge(device11->CreateShaderResourceView(floatRows.Get(),nullptr,&floatRowsView),"Float row copy view");
+        }
+        context11->CopyResource(floatSource?floatRows.Get():rows.Get(),source); // Same format family: raw copy.
+        auto input=floatSource?floatRowsView.Get():rowsView.Get();
+        auto target=floatSource?destination.srgbTarget.Get():destination.target.Get();
+        if(bottomUp)Draw(flipPixel.Get(),&input,1,target,width,height);
+        else {const DisplayRect whole{0,0,width,height};Draw(letterboxPixel.Get(),&input,1,target,width,height,nullptr,&whole);}
+    }
+    // Pixels where final differs from the HUD-less snapshot. Synchronous: only for
+    // the one-time row-order probe of a new game buffer.
+    UINT64 Differences(ID3D11ShaderResourceView* final){
+        if(!probeQuery){D3D11_QUERY_DESC q{D3D11_QUERY_OCCLUSION,0};RequireBridge(device11->CreateQuery(&q,&probeQuery),"Game buffer probe query");}
+        const float clear[4]{};context11->ClearRenderTargetView(layerGame.target.Get(),clear);
+        ID3D11ShaderResourceView* inputs[2]{final,hudless.view.Get()};
+        Draw(maskPixel.Get(),inputs,2,layerGame.target.Get(),hudless.width,hudless.height,probeQuery.Get());
+        UINT64 pixels=0;const auto deadline=GetTickCount64()+500;
+        while(context11->GetData(probeQuery.Get(),&pixels,sizeof(pixels),0)!=S_OK){if(GetTickCount64()>deadline)return UINT64_MAX;Sleep(0);}
+        return pixels;
+    }
+    // Unity's game-sized final image when it scales the game into a larger chain:
+    // with SetSourceSize the producer's top-left region, otherwise its game-sized
+    // screen buffer, recorded when the HUD camera finished (overlay canvases and
+    // IMGUI draw into it afterwards). That buffer's row order is probed once against
+    // the HUD-less snapshot: only the HUD may differ in the right orientation. A
+    // vertically symmetric frame (a uniform fade, a loading screen) cannot decide it,
+    // so the probe repeats on later frames, with HUD handling off until it decides.
+    bool SnapshotFinal(bool sourceRegion){
+        if(sourceRegion){
+            D3D11_BOX box{0,0,0,finalGame.width,finalGame.height,1};
+            context11->CopySubresourceRegion(finalGame.texture.Get(),0,0,0,0,producer.Get(),0,&box);
+            return true;
+        }
+        if(!gameBuffer)return false;
+        if(gameBuffer.Get()!=probedBuffer || gameBufferFloat!=probedFloat){
+            ConvertInto(finalGame,gameBuffer.Get(),true,gameBufferFloat);const UINT64 flipped=Differences(finalGame.view.Get());
+            ConvertInto(finalGame,gameBuffer.Get(),false,gameBufferFloat);const UINT64 direct=Differences(finalGame.view.Get());
+            const double area=static_cast<double>(finalGame.width)*finalGame.height;
+            const UINT64 low=std::min(flipped,direct),high=std::max(flipped,direct);
+            if(high==UINT64_MAX || static_cast<double>(high-low)<=area/200 || low*4>=high){
+                if(inconclusiveBuffer!=gameBuffer.Get()){
+                    inconclusiveBuffer=gameBuffer.Get();
+                    Log("FRAME_GEN_GAME_BUFFER buffer=%p row order undecided (flipped=%.2f%% unflipped=%.2f%% differing; symmetric or uniform frame); probing again on later frames",
+                        gameBuffer.Get(),flipped==UINT64_MAX?-1.0:100.0*flipped/area,direct==UINT64_MAX?-1.0:100.0*direct/area);
+                }
+                return false;
+            }
+            probedBuffer=gameBuffer.Get();probedFloat=gameBufferFloat;gameBufferBottomUp=flipped<direct;
+            gameBufferUsable=low<area/2;
+            Log(gameBufferUsable?ModLogLevel::Info:ModLogLevel::Warning,"FRAME_GEN_GAME_BUFFER buffer=%p format=%s size=%ux%u rows=%s; pixels differing from the HUD-less image: flipped=%.2f%% unflipped=%.2f%% (the HUD's share is expected)%s",
+                probedBuffer,gameBufferFloat?"RGBA16F (sRGB-encoded)":"RGBA8",finalGame.width,finalGame.height,gameBufferBottomUp?"bottom-up":"top-down",
+                flipped==UINT64_MAX?-1.0:100.0*flipped/area,direct==UINT64_MAX?-1.0:100.0*direct/area,gameBufferUsable?"":"; neither matches, HUD handling stays off");
+            if(gameBufferUsable && !gameBufferBottomUp)return true; // finalGame already holds the unflipped conversion.
+        }
+        if(!gameBufferUsable)return false;
+        ConvertInto(finalGame,gameBuffer.Get(),gameBufferBottomUp,gameBufferFloat);
+        return true;
+    }
+    // The HUD over the HUD-less image, as premultiplied color: exact with measured
+    // HUD opacity, otherwise every changed pixel as opaque UI. The final image is
+    // read from a copy, never through a producer view.
+    void ComposeUi(BridgeSlot& slot,ID3D11Texture2D* hudOpacity,ID3D11Texture2D* finalTexture,ID3D11ShaderResourceView* finalView,
+        ID3D11RenderTargetView* layerTarget,UINT width,UINT height){
+        if(layerCovering && !coverageDumped && LogEnabled(ModLogLevel::Debug))DumpCoverage(finalTexture);
+        LayerShaders();
+        auto opacityInput=OpacityView(hudOpacity);
+        const bool measure=!hudOpacity;
+        if(measure){
+            coverageArea=static_cast<double>(width)*height;
+            ReadCoverage(slot);
+            if(!slot.coverage){D3D11_QUERY_DESC q{D3D11_QUERY_OCCLUSION,0};RequireBridge(device11->CreateQuery(&q,&slot.coverage),"UI layer coverage query");}
+            const float clear[4]{};context11->ClearRenderTargetView(layerTarget,clear); // The mask discards unchanged pixels.
+        }
+        const bool counting=measure && !slot.coveragePending;
+        ID3D11ShaderResourceView* inputs[3]{finalView,hudless.view.Get(),opacityInput};
+        Draw(hudOpacity?layerPixel.Get():maskPixel.Get(),inputs,3,layerTarget,width,height,counting?slot.coverage.Get():nullptr);
+        if(counting)slot.coveragePending=true;
     }
     // Profiling timestamps. False when the timestamp resources cannot be created.
     UINT64 timestampFrequency=0;
@@ -453,10 +581,11 @@ struct BridgeGpu {
         if(c>=b)ProfilerGpu(PROFILE_LABEL("fg.presenting-queue span over Present (FG runtime GPU work + any queue idle)"),static_cast<double>(c-b)*scale);
     }
     void ReleaseBuffers(){
-        opacity.reset();opacityView.Reset();opacityViewSource=nullptr;hudlessView.Reset();
-        hudlessRows.Reset();hudlessRowsView.Reset();hudlessTarget.Reset();
+        opacity.reset();opacityView.Reset();opacityViewSource=nullptr;
+        hudless.Reset();finalGame.Reset();layerGame.Reset();rows.Reset();rowsView.Reset();floatRows.Reset();floatRowsView.Reset();
+        gameBuffer.Reset();probedBuffer=nullptr;
         layerCovering=false;coverageHigh=coverageLow=coverageSamples=0;coverageSum=coverageMax=0;
-        producer.Reset();hudless.Reset();views.Reset();hasImage=false;for(auto& slot:slots)slot=BridgeSlot{};
+        producer.Reset();views.Reset();hasImage=false;for(auto& slot:slots)slot=BridgeSlot{};
     }
 };
 // No mutex is held while DXGI presents or while a GPU completion event waits.
@@ -487,6 +616,10 @@ class FrameBridge final : public IDXGISwapChain2 {
     const void* hudlessSource=nullptr; // Logging only; never dereferenced.
     std::string hudlessRejected;      // Logging only.
     bool hudlessExact=false;          // This frame's HUD-less snapshot is what the HUD drew onto.
+    UINT gameWidth=0,gameHeight=0;    // Unity's game resolution this frame (the upscaler output).
+    std::atomic<UINT> sourceWidth{0},sourceHeight{0}; // SetSourceSize; 0 when unset.
+    std::string mapping;              // Logging only.
+    std::string gameBufferRejected;   // Logging only.
     const char* uiFallbackReason=nullptr;
     ~FrameBridge(){
         {std::lock_guard<std::mutex> guard(gameplayBridgeMutex);if(gameplayBridge==this)gameplayBridge=nullptr;}
@@ -528,28 +661,67 @@ class FrameBridge final : public IDXGISwapChain2 {
             const bool timing=ProfilerEnabled() && gpu->Timing(slot);
             {ProfileCpuScope p(PROFILE_LABEL("fg.bridge wait for FG input release (CPU)"));gpu->WaitFg(slot);} // D3D11 is a non-presenting queue: wait on SL's explicit input fence.
             bool inputs=gpu->fg && FrameGenerationWanted() && frameDepth && frameMotion && packet.frame==beforeHudFrame;
+            // Unity may render the game smaller than the window and scale it in, centred
+            // with bars; FG then runs on that rectangle, and the HUD work stays at game size.
+            const bool scaled=inputs && gameWidth && (gameWidth!=gpu->desc.Width || gameHeight!=gpu->desc.Height);
+            const bool sourceRegion=scaled && sourceWidth==gameWidth && sourceHeight==gameHeight;
+            DisplayRect content{0,0,gpu->desc.Width,gpu->desc.Height};
+            if(scaled)content=sourceRegion?DisplayRect{0,0,gameWidth,gameHeight}:GameRect(gameWidth,gameHeight,gpu->desc.Width,gpu->desc.Height);
+            ProfilerBegin(PROFILE_LABEL("fg.bridge D3D11 copies (final image + FG inputs + UI layer)"));
+            // Scaled HUD work needs Unity's game-sized final image as well.
+            bool gameFinal=false;
+            if(scaled && hudlessExact){
+                try {gameFinal=gpu->SnapshotFinal(sourceRegion);}
+                catch(const std::exception& e){Log(ModLogLevel::Warning,"FRAME_GEN_GAME_FINAL_FAILED %s; HUD handling off this frame",e.what());}
+            }
+            const bool hudlessUsable=hudlessExact && (!scaled || gameFinal);
+            if(inputs){
+                char text[256];
+                sprintf_s(text,"game=%ux%u chain=%ux%u rect=%u,%u %ux%u mode=%s finalImage=%s",gameWidth,gameHeight,gpu->desc.Width,gpu->desc.Height,
+                    content.left,content.top,content.width,content.height,!scaled?"same size":sourceRegion?"SetSourceSize region":"Unity scales the game image (aspect fit, centred)",
+                    !scaled?"producer":gameFinal?(sourceRegion?"producer region":"Unity game buffer"):hudlessExact?"unavailable; HUD-less input and UI layer off":"no HUD-less snapshot");
+                if(mapping!=text){mapping=text;Log(scaled?ModLogLevel::Info:ModLogLevel::Debug,"FRAME_GEN_DISPLAY_MAPPING %s",text);}
+            }
             // FSR interpolates the HUD-less image and composites the HUD from a separate layer.
-            bool layered=inputs && hudlessExact && !gpu->layerUnavailable && FrameGenerationLayersUi();
+            bool layered=inputs && hudlessUsable && !gpu->layerUnavailable && FrameGenerationLayersUi();
             // A missing HUD completion must never publish a stale alpha texture.
             auto hudOpacity=gpu->opacity && !gpu->opacityUnavailable?gpu->opacity->Texture():nullptr;
-            bool ui=inputs && hudlessExact && !layered && hudOpacity;
+            bool ui=inputs && hudlessUsable && !layered && hudOpacity;
             slot.uiCopied=false;
             D3D11_TEXTURE2D_DESC render{};if(inputs)frameDepth->GetDesc(&render);
-            ProfilerBegin(PROFILE_LABEL("fg.bridge D3D11 copies (final image + FG inputs + UI layer)"));
-            gpu->context11->CopyResource(slot.shared11.Get(),gpu->producer.Get());
+            // The presented real frame: Unity's own, or (scaled, with HUD work) the game image
+            // placed the same way as the HUD-less image and layer, so they match.
+            if(gameFinal)gpu->Place(gpu->finalGame.view.Get(),gpu->SlotTarget(slot.sharedTarget,slot.shared11.Get()),content);
+            else gpu->context11->CopyResource(slot.shared11.Get(),gpu->producer.Get());
             if(inputs){
                 gpu->Inputs(slot,render.Width,render.Height,layered);
                 gpu->context11->CopyResource(slot.depth11.Get(),frameDepth.Get());
                 gpu->context11->CopyResource(slot.motion11.Get(),frameMotion.Get());
-                gpu->context11->CopyResource(slot.hudless11.Get(),gpu->hudless.Get());
+                if(hudlessUsable){
+                    if(scaled)gpu->Place(gpu->hudless.view.Get(),gpu->SlotTarget(slot.hudlessTarget,slot.hudless11.Get()),content);
+                    else gpu->context11->CopyResource(slot.hudless11.Get(),gpu->hudless.texture.Get());
+                }
                 ui=ui && slot.ui11;
-                if(ui)gpu->context11->CopyResource(slot.ui11.Get(),hudOpacity);
+                if(ui){
+                    if(scaled)gpu->Place(gpu->OpacityView(hudOpacity),gpu->SlotTarget(slot.uiTarget,slot.ui11.Get()),content);
+                    else gpu->context11->CopyResource(slot.ui11.Get(),hudOpacity);
+                }
                 slot.uiCopied=ui;
                 if(layered){
-                    try {gpu->ComposeUi(slot,hudOpacity);}
+                    try {
+                        if(!slot.layerView)RequireBridge(gpu->device11->CreateRenderTargetView(slot.layer11.Get(),nullptr,&slot.layerView),"UI layer target");
+                        if(scaled){
+                            gpu->ComposeUi(slot,hudOpacity,gpu->finalGame.texture.Get(),gpu->finalGame.view.Get(),gpu->layerGame.target.Get(),gameWidth,gameHeight);
+                            gpu->Place(gpu->layerGame.view.Get(),slot.layerView.Get(),content);
+                        }else{
+                            if(!slot.finalView)RequireBridge(gpu->device11->CreateShaderResourceView(slot.shared11.Get(),nullptr,&slot.finalView),"UI layer final view");
+                            gpu->ComposeUi(slot,hudOpacity,slot.shared11.Get(),slot.finalView.Get(),slot.layerView.Get(),gpu->desc.Width,gpu->desc.Height);
+                        }
+                    }
                     catch(const std::exception& e){layered=false;gpu->layerUnavailable=true;Log(ModLogLevel::Warning,"FRAME_GEN_UI_LAYER_FAILED %s; FSR HUD-less detection retained",e.what());}
                 }
             }
+            gpu->gameBuffer.Reset(); // Unity's buffer is referenced only within its frame.
             const bool covering=layered && !hudOpacity && gpu->layerCovering;
             if(covering)layered=false;
             if(gpu->fg){
@@ -604,7 +776,7 @@ class FrameBridge final : public IDXGISwapChain2 {
             bool generating=false;
             {
                 ProfileCpuScope p(PROFILE_LABEL("fg.prepare: SDK tags/constants (CPU)"));
-                generating=inputs && FrameGenerationPrepare(packet,slot.depthTag12.Get(),slot.motionTag12.Get(),hudlessExact?slot.hudlessTag12.Get():nullptr,ui?slot.uiTag12.Get():nullptr,gpu->desc,interval,render.Width,render.Height);
+                generating=inputs && FrameGenerationPrepare(packet,slot.depthTag12.Get(),slot.motionTag12.Get(),hudlessUsable?slot.hudlessTag12.Get():nullptr,ui?slot.uiTag12.Get():nullptr,gpu->desc,interval,render.Width,render.Height,content);
             }
             if(gpu->opacity)gpu->opacity->Cancel();
             if(!generating && gpu->fg){FrameGenerationOff("Off, missing scene/HUD frame, or unsupported present");FrameGenerationClearTags(lastFgFrame,gpu->desc.Width,gpu->desc.Height);}
@@ -635,7 +807,7 @@ class FrameBridge final : public IDXGISwapChain2 {
                         Log("FRAME_GEN_PRESENT unityFrame=%d requested=%d status=0x%x sdkFrames=%u cumulativeSdkFrames=%d inputFence=%p value=%llu",fgFrame,generating,state.status,state.frames,RiskOfRainUpscaling_FrameGenerationPresentedFrames(),state.inputsFence,state.inputsValue);
                 }else if(generating){gpu->unknownFgCompletion=true;throw std::runtime_error("FG completion query failed");}
             }
-            packet={};frameDepth.Reset();frameMotion.Reset();beforeHudFrame=0;hudlessExact=false; // Never reuse a gameplay packet in menus or on a second Present.
+            packet={};frameDepth.Reset();frameMotion.Reset();beforeHudFrame=0;hudlessExact=false;gameWidth=gameHeight=0; // Never reuse a gameplay packet in menus or on a second Present.
             displayFrame=0;
             RequireBridge(gpu->queue->Signal(gpu->consumed12.Get(),value),"D3D12 slot-retirement signal");slot.done=value;gpu->lastIndex=index;gpu->hasImage=true;
             if(result==DXGI_ERROR_DEVICE_REMOVED || result==DXGI_ERROR_DEVICE_RESET || result==DXGI_ERROR_DEVICE_HUNG){
@@ -679,29 +851,37 @@ public:
         if(gpu->fg){std::lock_guard<std::mutex> guard(gameplayBridgeMutex);gameplayBridge=this;}
         Log("FRAME_BRIDGE_READY proxy=%p window=%p buffers=%u flags=0x%x size=%ux%u; Unity buffer0=D3D11 typeless RGBA8; display=D3D12; FG runtime=%s",this,hwnd,gpu->desc.BufferCount,gpu->desc.Flags,gpu->desc.Width,gpu->desc.Height,gpu->fg?"loaded, suspended until gameplay":"OFF");
     }
-    void DlaaInputs(const CameraFrame& frame,ID3D11Texture2D* depth,ID3D11Texture2D* motion){
+    void DlaaInputs(const CameraFrame& frame,ID3D11Texture2D* depth,ID3D11Texture2D* motion,UINT outputWidth,UINT outputHeight){
         BridgeOperation operation(busy);if(!operation.acquired || failed)return;
         if(!gpu->fg || !FrameGenerationWanted())return;
         ComPtr<ID3D11Device> owner;depth->GetDevice(&owner);if(owner.Get()!=gpu->device11.Get())return;
         D3D11_TEXTURE2D_DESC d{},m{};depth->GetDesc(&d);motion->GetDesc(&m);
-        // DLSS supplies render-sized depth/motion; the HUD-less color stays display-sized.
-        if(!d.Width || !d.Height || d.Width>gpu->desc.Width || d.Height>gpu->desc.Height || m.Width!=d.Width || m.Height!=d.Height)return;
-        packet=frame;frameDepth=depth;frameMotion=motion;
+        // The upscaler output is Unity's game resolution: the chain's size, or smaller
+        // when Unity scales the game into the window.
+        if(!outputWidth || !outputHeight){outputWidth=gpu->desc.Width;outputHeight=gpu->desc.Height;}
+        if(outputWidth>gpu->desc.Width || outputHeight>gpu->desc.Height)return;
+        // DLSS supplies render-sized depth/motion; the HUD-less color is game-sized.
+        if(!d.Width || !d.Height || d.Width>outputWidth || d.Height>outputHeight || m.Width!=d.Width || m.Height!=d.Height)return;
+        packet=frame;frameDepth=depth;frameMotion=motion;gameWidth=outputWidth;gameHeight=outputHeight;
     }
     // The HUD camera has an image effect, so Unity can draw it into an intermediate
     // instead of the producer; lower-resolution DLSS composes the world there. The
     // render target bound at the HUD's BeforeForwardOpaque event is exactly what
-    // the HUD draws onto. Use it when it is a display-sized RGBA8 surface. Otherwise
-    // returns null and describes the target: the producer then still holds the
-    // previous frame, which must never stand in for this frame's HUD-less image.
-    ID3D11Texture2D* HudTarget(ComPtr<ID3D11Texture2D>& bound,std::string& rejected){
+    // the HUD draws onto. Use it when it is a game-sized RGBA8 or RGBA16F surface
+    // (floatTarget). Otherwise returns null and describes the target: the producer
+    // then still holds the previous frame, which must never stand in for this
+    // frame's HUD-less image.
+    ID3D11Texture2D* HudTarget(ComPtr<ID3D11Texture2D>& bound,std::string& rejected,bool& floatTarget){
+        const UINT width=gameWidth?gameWidth:gpu->desc.Width,height=gameHeight?gameHeight:gpu->desc.Height;
+        floatTarget=false;
         ComPtr<ID3D11RenderTargetView> view;gpu->context11->OMGetRenderTargets(1,&view,nullptr);
         ComPtr<ID3D11Resource> resource;if(view)view->GetResource(&resource);
         if(!resource || FAILED(resource.As(&bound))){rejected="no 2D render target bound";return nullptr;}
-        if(bound.Get()==gpu->producer.Get())return bound.Get();
+        if(bound.Get()==gpu->producer.Get())return width==gpu->desc.Width && height==gpu->desc.Height?bound.Get():(rejected="producer bound while Unity scales the game",nullptr);
         D3D11_TEXTURE2D_DESC d{};bound->GetDesc(&d);
         bool rgba8=d.Format==DXGI_FORMAT_R8G8B8A8_TYPELESS || d.Format==DXGI_FORMAT_R8G8B8A8_UNORM || d.Format==DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-        if(!rgba8 || d.Width!=gpu->desc.Width || d.Height!=gpu->desc.Height || d.SampleDesc.Count!=1 || d.ArraySize!=1 || d.MipLevels!=1){
+        floatTarget=d.Format==DXGI_FORMAT_R16G16B16A16_TYPELESS || d.Format==DXGI_FORMAT_R16G16B16A16_FLOAT;
+        if(!(rgba8 || floatTarget) || d.Width!=width || d.Height!=height || d.SampleDesc.Count!=1 || d.ArraySize!=1 || d.MipLevels!=1){
             char text[160];sprintf_s(text,"format=%u size=%ux%u samples=%u arraySize=%u mips=%u",d.Format,d.Width,d.Height,d.SampleDesc.Count,d.ArraySize,d.MipLevels);
             rejected=text;return nullptr;
         }
@@ -713,21 +893,25 @@ public:
         captureUi=captureUi && FrameGenerationUIAvailable();
         if(!displayFrame)displayFrame=frame;
         if(failed || !gpu->fg || !FrameGenerationWanted() || !frameDepth || packet.frame!=frame)return;
-        ComPtr<ID3D11Texture2D> bound;std::string rejected;auto source=HudTarget(bound,rejected);
+        ComPtr<ID3D11Texture2D> bound;std::string rejected;bool floatTarget=false;auto source=HudTarget(bound,rejected,floatTarget);
         // Only the swap-chain producer has top-down rows; Unity RenderTextures are bottom-up on D3D.
         const bool bottomUp=source!=gpu->producer.Get();
         if(source!=hudlessSource || rejected!=hudlessRejected){
             hudlessSource=source;hudlessRejected=rejected;
-            if(source)Log("FRAME_GEN_HUDLESS_SOURCE unityFrame=%d source=%p producer=%p kind=%s",frame,source,gpu->producer.Get(),bottomUp?"bound HUD target (RenderTexture rows flipped to swap-chain order)":"producer");
+            if(source)Log("FRAME_GEN_HUDLESS_SOURCE unityFrame=%d source=%p producer=%p kind=%s",frame,source,gpu->producer.Get(),!bottomUp?"producer":floatTarget?"bound RGBA16F HUD target (RenderTexture rows flipped, sRGB-encoded like the HUD's final blit)":"bound HUD target (RenderTexture rows flipped to swap-chain order)");
             else Log(ModLogLevel::Warning,"FRAME_GEN_HUDLESS_SOURCE unityFrame=%d kind=unsupported HUD target (%s); no HUD-less input or UI layer: generated frames interpolate the HUD",frame,rejected.c_str());
         }
         hudlessExact=false;beforeHudFrame=frame;
         if(!source)return; // FG still runs from the final image; no HUD opacity capture.
-        try {ProfileScope p(PROFILE_LABEL("fg.hudless copy (display-sized)"));gpu->SnapshotHudless(source,bottomUp);}
+        try {
+            ProfileScope p(PROFILE_LABEL("fg.hudless copy (display-sized)"));
+            gpu->GameImages(gameWidth?gameWidth:gpu->desc.Width,gameHeight?gameHeight:gpu->desc.Height);
+            gpu->ConvertInto(gpu->hudless,source,bottomUp,floatTarget);
+        }
         catch(const std::exception& e){Log(ModLogLevel::Warning,"FRAME_GEN_HUDLESS_FAILED %s; Frame Generation skips this frame",e.what());beforeHudFrame=0;return;}
         hudlessExact=true;
         if(captureUi && !gpu->opacity && !gpu->opacityUnavailable){
-            try {gpu->opacity=std::make_unique<HudOpacity>(gpu->device11.Get(),gpu->context11.Get(),gpu->desc.Width,gpu->desc.Height);}
+            try {gpu->opacity=std::make_unique<HudOpacity>(gpu->device11.Get(),gpu->context11.Get(),gpu->hudless.width,gpu->hudless.height);}
             catch(const std::exception& e){gpu->opacityUnavailable=true;Log(ModLogLevel::Warning, "FRAME_GEN_UI_FALLBACK %s; ordinary HUDless FG retained",e.what());}
         }
         if(captureUi && gpu->opacity && !gpu->opacityUnavailable){
@@ -735,9 +919,36 @@ public:
             catch(const std::exception& e){gpu->opacity->Cancel();gpu->opacityUnavailable=true;Log(ModLogLevel::Warning, "FRAME_GEN_UI_FALLBACK %s; ordinary HUDless FG retained",e.what());}
         }
     }
+    // While Unity scales a smaller game image into the window, the target bound when
+    // the HUD camera finishes is Unity's game-sized screen buffer; overlay canvases
+    // and IMGUI draw into it afterwards, and Present reads it (SnapshotFinal).
+    void GameBuffer(int frame){
+        gpu->gameBuffer.Reset();
+        if(failed || !gpu->fg || !gameWidth || packet.frame!=frame || (gameWidth==gpu->desc.Width && gameHeight==gpu->desc.Height))return;
+        if(sourceWidth==gameWidth && sourceHeight==gameHeight)return; // The producer's top-left region holds it.
+        ComPtr<ID3D11RenderTargetView> view;gpu->context11->OMGetRenderTargets(1,&view,nullptr);
+        ComPtr<ID3D11Resource> resource;if(view)view->GetResource(&resource);
+        ComPtr<ID3D11Texture2D> bound;std::string rejected;
+        if(!resource || FAILED(resource.As(&bound)))rejected="no 2D render target bound";
+        else if(bound.Get()==gpu->producer.Get())rejected="the swap chain itself";
+        else{
+            D3D11_TEXTURE2D_DESC d{};bound->GetDesc(&d);
+            const bool rgba8=d.Format==DXGI_FORMAT_R8G8B8A8_TYPELESS || d.Format==DXGI_FORMAT_R8G8B8A8_UNORM || d.Format==DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+            const bool half=d.Format==DXGI_FORMAT_R16G16B16A16_TYPELESS || d.Format==DXGI_FORMAT_R16G16B16A16_FLOAT;
+            if(!(rgba8 || half) || d.Width!=gameWidth || d.Height!=gameHeight || d.SampleDesc.Count!=1 || d.ArraySize!=1 || d.MipLevels!=1){
+                char text[160];sprintf_s(text,"format=%u size=%ux%u samples=%u",d.Format,d.Width,d.Height,d.SampleDesc.Count);rejected=text;
+            }else{gpu->gameBuffer=bound;gpu->gameBufferFloat=half;}
+        }
+        if(rejected!=gameBufferRejected){
+            gameBufferRejected=rejected;
+            if(!rejected.empty())Log(ModLogLevel::Warning,"FRAME_GEN_GAME_BUFFER unityFrame=%d unsupported (%s); while Unity scales the game, HUD-less input and UI layer stay off",frame,rejected.c_str());
+        }
+    }
     void AfterHud(int frame,bool safe){
         ProfilerEnd(PROFILE_LABEL("fg.HUD draws + UI opacity replay (includes the game's HUD)"));
-        BridgeOperation operation(busy);if(!operation.acquired || !gpu->opacity)return;
+        BridgeOperation operation(busy);if(!operation.acquired)return;
+        GameBuffer(frame);
+        if(!gpu->opacity)return;
         bool valid=gpu->opacity->End(frame);
         const char* reason=safe?gpu->opacity->Reason():"HUD image effect or late diagnostic overlay";
         if(!valid || !safe){
@@ -798,7 +1009,8 @@ public:
             gpu->producer->AddRef();held=gpu->producer->Release();
             if(held>1 || gpu->views->Count()>2)return DXGI_ERROR_INVALID_CALL;
             gpu->ReleaseBuffers();
-            packet={};frameDepth.Reset();frameMotion.Reset();beforeHudFrame=0;hudlessExact=false;
+            packet={};frameDepth.Reset();frameMotion.Reset();beforeHudFrame=0;hudlessExact=false;gameWidth=gameHeight=0;
+            sourceWidth=sourceHeight=0; // A resize restores the full source region.
             HRESULT result=gpu->display->ResizeBuffers(count,width,height,format,flags);
             gpu->Buffers(); // Rebuild at the actual old/new size, even if DXGI rejected the resize.
             Log("FRAME_BRIDGE_RESIZED size=%ux%u count=%u flags=0x%x HRESULT=0x%08lx",gpu->desc.Width,gpu->desc.Height,gpu->desc.BufferCount,gpu->desc.Flags,result);
@@ -823,7 +1035,12 @@ public:
     HRESULT STDMETHODCALLTYPE GetBackgroundColor(DXGI_RGBA* color) override{return gpu->display->GetBackgroundColor(color);}
     HRESULT STDMETHODCALLTYPE SetRotation(DXGI_MODE_ROTATION rotation) override{return gpu->display->SetRotation(rotation);}
     HRESULT STDMETHODCALLTYPE GetRotation(DXGI_MODE_ROTATION* rotation) override{return gpu->display->GetRotation(rotation);}
-    HRESULT STDMETHODCALLTYPE SetSourceSize(UINT width,UINT height) override{return gpu->display->SetSourceSize(width,height);}
+    HRESULT STDMETHODCALLTYPE SetSourceSize(UINT width,UINT height) override{
+        HRESULT result=gpu->display->SetSourceSize(width,height);
+        Log("FRAME_BRIDGE_SOURCE_SIZE size=%ux%u chain=%ux%u HRESULT=0x%08lx",width,height,gpu->desc.Width,gpu->desc.Height,result);
+        if(SUCCEEDED(result)){const bool full=width==gpu->desc.Width && height==gpu->desc.Height;sourceWidth=full?0:width;sourceHeight=full?0:height;}
+        return result;
+    }
     HRESULT STDMETHODCALLTYPE GetSourceSize(UINT* width,UINT* height) override{return gpu->display->GetSourceSize(width,height);}
     HRESULT STDMETHODCALLTYPE SetMaximumFrameLatency(UINT value) override{
         if(gpu->fg && !(gpu->applicationFlags&DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT))return DXGI_ERROR_INVALID_CALL;
@@ -880,7 +1097,7 @@ void CreateBridgeDisplay(ID3D12Device* queueDevice,IDXGIFactory2* factory,HWND h
     RequireBridge(queueDevice->CreateCommandQueue(&q,IID_PPV_ARGS(&queue)),"Display queue");
     BuildingScope scope;RequireBridge(factory->CreateSwapChainForHwnd(queue.Get(),hwnd,&desc,fullscreen,output,&display),"Single D3D12 window swap chain");
 }
-void FrameBridgeSubmitInputs(const CameraFrame& packet,ID3D11Texture2D* depth,ID3D11Texture2D* motion){std::lock_guard<std::mutex> guard(gameplayBridgeMutex);if(gameplayBridge)gameplayBridge->DlaaInputs(packet,depth,motion);}
+void FrameBridgeSubmitInputs(const CameraFrame& packet,ID3D11Texture2D* depth,ID3D11Texture2D* motion,UINT outputWidth,UINT outputHeight){std::lock_guard<std::mutex> guard(gameplayBridgeMutex);if(gameplayBridge)gameplayBridge->DlaaInputs(packet,depth,motion,outputWidth,outputHeight);}
 void FrameBridgeBeforeHud(int frame,bool captureUi){std::lock_guard<std::mutex> guard(gameplayBridgeMutex);if(gameplayBridge)gameplayBridge->BeforeHud(frame,captureUi);}
 void FrameBridgeAfterHud(int frame,bool safe){std::lock_guard<std::mutex> guard(gameplayBridgeMutex);if(gameplayBridge)gameplayBridge->AfterHud(frame,safe);}
 void FrameBridgeRenderFrame(int frame){std::lock_guard<std::mutex> guard(gameplayBridgeMutex);if(gameplayBridge)gameplayBridge->RenderFrame(frame);}

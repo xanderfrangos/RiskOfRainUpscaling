@@ -7,6 +7,8 @@
 #include "Diagnostics/Profiler.h"
 #include "shaders/Fullscreen.h"
 #include "shaders/HudFixture.h"
+#include "shaders/FlipRows.h"
+#include "shaders/Letterbox.h"
 #include <DirectXPackedVector.h>
 #include <cmath>
 #include <cstdio>
@@ -51,6 +53,36 @@ static bool DrawUiFixture(ID3D11Device* device,ID3D11DeviceContext* context,IDXG
         r=view.Get();context->OMSetRenderTargets(1,&r,nullptr);D3D11_VIEWPORT top{0,0,16,12,0,1};context->RSSetViewports(1,&top);context->Draw(3,0);
     }
     context1->SwapDeviceContextState(previous.Get(),nullptr);return true;
+}
+// Unity's final blit of a float HUD target to the linear-space swap chain: flip
+// RenderTexture rows to top-down and encode through an sRGB view.
+static bool BlitFloatToProducer(ID3D11Device* device,ID3D11DeviceContext* context,IDXGISwapChain* chain,ID3D11Texture2D* source){
+    ComPtr<ID3D11Device1> device1;ComPtr<ID3D11DeviceContext1> context1;
+    if(FAILED(device->QueryInterface(IID_PPV_ARGS(&device1))) || FAILED(context->QueryInterface(IID_PPV_ARGS(&context1))))return false;
+    auto level=device->GetFeatureLevel();ComPtr<ID3DDeviceContextState> state,previous;
+    if(FAILED(device1->CreateDeviceContextState(0,&level,1,D3D11_SDK_VERSION,__uuidof(ID3D11Device),nullptr,&state)))return false;
+    ComPtr<ID3D11Texture2D> producer;ComPtr<ID3D11RenderTargetView> view;ComPtr<ID3D11ShaderResourceView> input;
+    D3D11_RENDER_TARGET_VIEW_DESC rd{};rd.Format=DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;rd.ViewDimension=D3D11_RTV_DIMENSION_TEXTURE2D;
+    if(FAILED(chain->GetBuffer(0,IID_PPV_ARGS(&producer))) || FAILED(device->CreateRenderTargetView(producer.Get(),&rd,&view)) ||
+       FAILED(device->CreateShaderResourceView(source,nullptr,&input)))return false;
+    ComPtr<ID3D11VertexShader> vs;ComPtr<ID3D11PixelShader> ps;
+    if(FAILED(device->CreateVertexShader(FullscreenShader,sizeof(FullscreenShader),nullptr,&vs)) || FAILED(device->CreatePixelShader(FlipRowsShader,sizeof(FlipRowsShader),nullptr,&ps)))return false;
+    context1->SwapDeviceContextState(state.Get(),&previous);auto r=view.Get();context->OMSetRenderTargets(1,&r,nullptr);
+    D3D11_VIEWPORT vp{0,0,static_cast<float>(width),static_cast<float>(height),0,1};context->RSSetViewports(1,&vp);
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);context->VSSetShader(vs.Get(),nullptr,0);context->PSSetShader(ps.Get(),nullptr,0);
+    auto s=input.Get();context->PSSetShaderResources(0,1,&s);context->Draw(3,0);
+    ID3D11ShaderResourceView* none=nullptr;context->PSSetShaderResources(0,1,&none);
+    context1->SwapDeviceContextState(previous.Get(),nullptr);return true;
+}
+// RGBA8 readback at the texture's own size.
+static std::vector<unsigned char> ReadBytes(ID3D11Device* device,ID3D11DeviceContext* immediate,ID3D11Texture2D* texture){
+    D3D11_TEXTURE2D_DESC d{};texture->GetDesc(&d);d.BindFlags=0;d.MiscFlags=0;d.Usage=D3D11_USAGE_STAGING;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    ComPtr<ID3D11Texture2D> staging;if(FAILED(device->CreateTexture2D(&d,nullptr,&staging)))return {};
+    immediate->CopyResource(staging.Get(),texture);D3D11_MAPPED_SUBRESOURCE mapped{};
+    if(FAILED(immediate->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped)))return {};
+    std::vector<unsigned char> result(size_t(d.Width)*d.Height*4);
+    for(UINT y=0;y<d.Height;++y)std::memcpy(result.data()+size_t(y)*d.Width*4,static_cast<unsigned char*>(mapped.pData)+size_t(y)*mapped.RowPitch,d.Width*4);
+    immediate->Unmap(staging.Get(),0);return result;
 }
 static ComPtr<ID3D11Texture2D> Texture(ID3D11Device* device, DXGI_FORMAT format, UINT bind=D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_RENDER_TARGET,
     const void* data=nullptr, UINT pitch=0, int w=0, int h=0) {
@@ -218,6 +250,72 @@ static CameraFrame Frame(int index) {
     f.up[1]=1;f.right[0]=1;f.forward[2]=-1;return f;
 }
 // FG constants must describe the top-down swap chain, not Unity's flipped RT space.
+// Unity scales a smaller game resolution into the window aspect-fit and centred.
+static bool GameRectCheck() {
+    auto same=[](DisplayRect r,unsigned l,unsigned t,unsigned w,unsigned h){return r.left==l && r.top==t && r.width==w && r.height==h;};
+    return same(GameRect(2560,1440,2560,1440),0,0,2560,1440)    // Same size: the whole chain.
+        && same(GameRect(2560,1440,2880,1800),0,90,2880,1620)   // 16:9 game in a 16:10 window: letterbox.
+        && same(GameRect(1920,1080,2560,1080),320,0,1920,1080)  // Taller game than window aspect: pillarbox.
+        && same(GameRect(1920,1200,2560,1440),128,0,2304,1440)  // 16:10 game in a 16:9 window.
+        && same(GameRect(1280,720,2560,1440),0,0,2560,1440)     // Exact 2x scale.
+        && same(GameRect(0,0,2560,1440),0,0,2560,1440);          // Unknown game size: the whole chain.
+}
+// The bridge's game-image placement (Letterbox shader, linear clamp sampler) of an
+// RGBA8 source into a dw x dh RGBA8 target at rect; returns the target bytes.
+static std::vector<unsigned char> PlaceImage(ID3D11Device* device,ID3D11DeviceContext* context,const std::vector<unsigned char>& source,UINT sw,UINT sh,UINT dw,UINT dh,DisplayRect rect){
+    std::vector<unsigned char> result;
+    ComPtr<ID3D11Device1> device1;ComPtr<ID3D11DeviceContext1> context1;
+    if(FAILED(device->QueryInterface(IID_PPV_ARGS(&device1))) || FAILED(context->QueryInterface(IID_PPV_ARGS(&context1))))return result;
+    auto level=device->GetFeatureLevel();ComPtr<ID3DDeviceContextState> state,previous;
+    if(FAILED(device1->CreateDeviceContextState(0,&level,1,D3D11_SDK_VERSION,__uuidof(ID3D11Device),nullptr,&state)))return result;
+    ComPtr<ID3D11VertexShader> vs;ComPtr<ID3D11PixelShader> ps;ComPtr<ID3D11Buffer> constants;ComPtr<ID3D11SamplerState> sampler;
+    D3D11_BUFFER_DESC b{};b.ByteWidth=16;b.Usage=D3D11_USAGE_DEFAULT;b.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+    D3D11_SAMPLER_DESC sd{};sd.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;sd.AddressU=sd.AddressV=sd.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;sd.MaxLOD=D3D11_FLOAT32_MAX;
+    if(FAILED(device->CreateVertexShader(FullscreenShader,sizeof(FullscreenShader),nullptr,&vs)) || FAILED(device->CreatePixelShader(LetterboxShader,sizeof(LetterboxShader),nullptr,&ps)) ||
+       FAILED(device->CreateBuffer(&b,nullptr,&constants)) || FAILED(device->CreateSamplerState(&sd,&sampler)))return result;
+    D3D11_TEXTURE2D_DESC t{};t.Width=sw;t.Height=sh;t.MipLevels=t.ArraySize=1;t.Format=DXGI_FORMAT_R8G8B8A8_UNORM;t.SampleDesc.Count=1;t.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA initial{source.data(),sw*4,0};ComPtr<ID3D11Texture2D> input,output,staging;ComPtr<ID3D11ShaderResourceView> view;ComPtr<ID3D11RenderTargetView> target;
+    if(FAILED(device->CreateTexture2D(&t,&initial,&input)) || FAILED(device->CreateShaderResourceView(input.Get(),nullptr,&view)))return result;
+    t.Width=dw;t.Height=dh;t.BindFlags=D3D11_BIND_RENDER_TARGET;
+    if(FAILED(device->CreateTexture2D(&t,nullptr,&output)) || FAILED(device->CreateRenderTargetView(output.Get(),nullptr,&target)))return result;
+    t.BindFlags=0;t.Usage=D3D11_USAGE_STAGING;t.CPUAccessFlags=D3D11_CPU_ACCESS_READ;if(FAILED(device->CreateTexture2D(&t,nullptr,&staging)))return result;
+    const float r[4]{static_cast<float>(rect.left),static_cast<float>(rect.top),static_cast<float>(rect.width),static_cast<float>(rect.height)};
+    context->UpdateSubresource(constants.Get(),0,nullptr,r,0,0);
+    const float fill[4]{.5f,.5f,.5f,.5f};context->ClearRenderTargetView(target.Get(),fill); // The pass must overwrite every pixel.
+    context1->SwapDeviceContextState(state.Get(),&previous);
+    auto rt=target.Get();context->OMSetRenderTargets(1,&rt,nullptr);D3D11_VIEWPORT vp{0,0,static_cast<float>(dw),static_cast<float>(dh),0,1};context->RSSetViewports(1,&vp);
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);context->VSSetShader(vs.Get(),nullptr,0);context->PSSetShader(ps.Get(),nullptr,0);
+    auto c=constants.Get();context->PSSetConstantBuffers(0,1,&c);auto smp=sampler.Get();context->PSSetSamplers(0,1,&smp);auto v=view.Get();context->PSSetShaderResources(0,1,&v);
+    context->Draw(3,0);
+    ID3D11ShaderResourceView* none=nullptr;context->PSSetShaderResources(0,1,&none);ID3D11RenderTargetView* noTarget=nullptr;context->OMSetRenderTargets(1,&noTarget,nullptr);
+    context1->SwapDeviceContextState(previous.Get(),nullptr);
+    context->CopyResource(staging.Get(),output.Get());D3D11_MAPPED_SUBRESOURCE m{};if(FAILED(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&m)))return result;
+    result.resize(size_t(dw)*dh*4);
+    for(UINT y=0;y<dh;++y)std::memcpy(result.data()+size_t(y)*dw*4,static_cast<unsigned char*>(m.pData)+size_t(y)*m.RowPitch,dw*4);
+    context->Unmap(staging.Get(),0);return result;
+}
+// The placement shader: an exact copy at 1:1 (any offset), a scaled image that fills
+// exactly the game rectangle, and zero in the bars.
+static bool LetterboxCheck(ID3D11Device* device,ID3D11DeviceContext* context){
+    auto place=[&](const std::vector<unsigned char>& source,UINT sw,UINT sh,UINT dw,UINT dh,DisplayRect rect){return PlaceImage(device,context,source,sw,sh,dw,dh,rect);};
+    auto inside=[](DisplayRect r,UINT x,UINT y){return x>=r.left && x<r.left+r.width && y>=r.top && y<r.top+r.height;};
+    // 1:1 at an offset: exact bytes inside, zero outside.
+    std::vector<unsigned char> game(5*3*4);for(size_t i=0;i<game.size();++i)game[i]=static_cast<unsigned char>(i*37+11);
+    const DisplayRect copy{2,1,5,3};auto placed=place(game,5,3,9,6,copy);if(placed.empty())return false;
+    for(UINT y=0;y<6;++y)for(UINT x=0;x<9;++x)for(UINT k=0;k<4;++k){
+        const unsigned char expected=inside(copy,x,y)?game[((y-copy.top)*5+(x-copy.left))*4+k]:0;
+        if(placed[(y*9+x)*4+k]!=expected)return false;
+    }
+    // Scaled 16:9 into 16:10 (GameRect): a solid image fills exactly the rectangle.
+    std::vector<unsigned char> solid(16*9*4);for(size_t i=0;i<solid.size();i+=4){solid[i]=200;solid[i+1]=40;solid[i+2]=90;solid[i+3]=255;}
+    const DisplayRect scaledRect=GameRect(16,9,24,15);if(scaledRect.left!=0 || scaledRect.top!=0 || scaledRect.width!=24 || scaledRect.height!=14)return false; // One spare row: the bar is below.
+    placed=place(solid,16,9,24,15,scaledRect);if(placed.empty())return false;
+    for(UINT y=0;y<15;++y)for(UINT x=0;x<24;++x)for(UINT k=0;k<4;++k){
+        const unsigned char expected=inside(scaledRect,x,y)?solid[k]:0;
+        if(placed[(y*24+x)*4+k]!=expected)return false;
+    }
+    return true;
+}
 static bool FrameGenerationSpaceCheck() {
     auto f=Frame(2);f.jitterX=.125f;f.jitterY=.25f;
     for(int i=0;i<16;++i){f.clipToPrevious[i]=static_cast<float>(i+1);f.previousToClip[i]=static_cast<float>(17-i);}
@@ -594,15 +692,23 @@ int main(int argc,char** argv) {
     for(float invalid:{-0.1f,1.1f,std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity()})
         if(RiskOfRainUpscaling_SetSharpness(invalid)!=-1)return 110;
     if(!FrameGenerationSpaceCheck())return 141;
+    if(!GameRectCheck())return 155;
     bool hardware=false,bridge=false,fg=false,visible=false,appWaitable=false,reflexLimit=false,fgLive=false;
     bool uiRecomposition=false,fsr=false;
     for(int i=1;i<argc;++i)uiRecomposition|=!std::strcmp(argv[i],"--ui-recomposition");
     for(int i=1;i<argc;++i)fsr|=!std::strcmp(argv[i],"--fsr");
     for(int i=1;i<argc;++i)fsrUpscaler|=!std::strcmp(argv[i],"--fsr-upscaler");
     bool hudRenderTextureMode=false;for(int i=1;i<argc;++i)hudRenderTextureMode|=!std::strcmp(argv[i],"--hud-render-texture");
-    // --hud-hdr-target: the HUD draws onto an RGBA16F target, which the bridge cannot
-    // snapshot; FG must continue without a HUD-less image instead of a stale one.
+    // --hud-hdr-target: as at native resolution in game, the HUD draws onto an RGBA16F
+    // RenderTexture (bottom-up linear values) and its image effect's final blit encodes
+    // it into the sRGB producer afterwards; the producer is stale during the HUD.
     bool hudHdrTarget=false;for(int i=1;i<argc;++i)hudHdrTarget|=!std::strcmp(argv[i],"--hud-hdr-target");
+    // --display-scale: Unity renders the game (width x height) smaller than a 16:10
+    // window and scales it in, letterboxed. The HUD draws into a bottom-up game-sized
+    // RenderTexture, the final game image (with HUD) is in Unity's bottom-up game-sized
+    // screen buffer when the HUD camera finishes, and the producer is never used.
+    bool displayScale=false;for(int i=1;i<argc;++i)displayScale|=!std::strcmp(argv[i],"--display-scale");
+    if(displayScale)hudRenderTextureMode=true;
     if(fsrUpscaler && RiskOfRainUpscaling_SetUpscalerBackend(2))return 148;
     int requestedMultiplier=2,presentsAt32=0,maxSdkFrames=0;
     const int liveMultipliers[]{2,3,4,5,6,5,3,2};
@@ -628,7 +734,13 @@ int main(int argc,char** argv) {
     }
     ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> immediate;
     if(FAILED(D3D11CreateDevice(nullptr,hardware?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,nullptr,&immediate)))return 1;
+    if(!LetterboxCheck(device.Get(),immediate.Get()))return 156;
     ComPtr<ID3D11Texture2D> hudRenderTextureOwner,hudHdrOwner;
+    if(displayScale && (!fg || uiRecomposition || hudHdrTarget || reflexLimit || fgLive || appWaitable))return 157;
+    const UINT displayWidth=displayScale?width*9/8:width,displayHeight=displayScale?height*5/4:height;
+    const DisplayRect content=GameRect(width,height,displayWidth,displayHeight);
+    ComPtr<ID3D11Texture2D> gameBufferOwner;
+    if(displayScale){gameBufferOwner=Texture(device.Get(),DXGI_FORMAT_R8G8B8A8_UNORM);if(!gameBufferOwner)return 157;}
     if(hudHdrTarget){
         if(!fg || hudRenderTextureMode || uiRecomposition)return 152;
         hudHdrOwner=Texture(device.Get(),DXGI_FORMAT_R16G16B16A16_FLOAT);if(!hudHdrOwner)return 152;
@@ -647,7 +759,7 @@ int main(int argc,char** argv) {
     if(hardware) {
         window=CreateWindowExW(0,L"STATIC",L"RiskOfRainUpscaling DLAA presentation fixture",WS_OVERLAPPED,0,0,width,height,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
         if(!window || FAILED(CreateDXGIFactory2(0,IID_PPV_ARGS(&factory))))return 31;
-        chainDesc.Width=width;chainDesc.Height=height;chainDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
+        chainDesc.Width=displayWidth;chainDesc.Height=displayHeight;chainDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
         chainDesc.SampleDesc.Count=1;chainDesc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;chainDesc.BufferCount=2;chainDesc.SwapEffect=DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
         if(fg && appWaitable)chainDesc.Flags=DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH|DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING|DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
         if(FAILED(createChain()))return 32;
@@ -764,7 +876,22 @@ int main(int argc,char** argv) {
                 bridgeImage.resize(evaluated.size());
                 for(size_t p=0;p<evaluated.size();++p)bridgeImage[p]=static_cast<unsigned char>(std::clamp(XMConvertHalfToFloat(evaluated[p]),0.f,1.f)*255.f+.5f);
                 ComPtr<ID3D11Texture2D> producer;if(FAILED(chain->GetBuffer(0,IID_PPV_ARGS(&producer))))return 64;
-                immediate->UpdateSubresource(producer.Get(),0,nullptr,bridgeImage.data(),width*4,0);
+                if(displayScale){std::vector<unsigned char> stale(size_t(displayWidth)*displayHeight*4,64);immediate->UpdateSubresource(producer.Get(),0,nullptr,stale.data(),displayWidth*4,0);}
+                else immediate->UpdateSubresource(producer.Get(),0,nullptr,bridgeImage.data(),width*4,0);
+            }
+            std::vector<unsigned char> hudlessExpected;
+            if(fg && hudHdrOwner){
+                std::vector<uint16_t> bottomUp(bridgeImage.size());
+                for(int y=0;y<height;++y)for(int x=0;x<width*4;++x){
+                    const float encoded=bridgeImage[size_t(height-1-y)*width*4+x]/255.f;
+                    const float linear=(x%4==3)?encoded:(encoded<=.04045f?encoded/12.92f:std::pow((encoded+.055f)/1.055f,2.4f));
+                    bottomUp[size_t(y)*width*4+x]=DirectX::PackedVector::XMConvertFloatToHalf(linear);
+                }
+                immediate->UpdateSubresource(hudHdrOwner.Get(),0,nullptr,bottomUp.data(),width*8,0);
+                // The previous frame is still in the producer while the HUD draws.
+                ComPtr<ID3D11Texture2D> producer;if(FAILED(chain->GetBuffer(0,IID_PPV_ARGS(&producer))))return 153;
+                std::vector<unsigned char> stale(bridgeImage.size(),0);for(size_t p=1;p<stale.size();p+=4)stale[p]=255;
+                immediate->UpdateSubresource(producer.Get(),0,nullptr,stale.data(),width*4,0);
             }
             if(fg && hudRenderTexture){
                 // The pre-HUD scene in the RenderTexture's bottom-up rows; the producer keeps top-down rows.
@@ -791,8 +918,26 @@ int main(int argc,char** argv) {
                 immediate->OMSetRenderTargets(1,&target,dsv.Get());hudView.Reset();
                 // Draw a synthetic HUD after the snapshot. It must not leak into the tagged color.
                 ComPtr<ID3D11Texture2D> producer;if(FAILED(chain->GetBuffer(0,IID_PPV_ARGS(&producer))))return 80;
-                std::vector<unsigned char> hud(16*12*4,255);D3D11_BOX box{0,0,0,16,12,1};
-                immediate->UpdateSubresource(producer.Get(),0,&box,hud.data(),16*4,0);
+                if(hudHdrOwner){
+                    if(!BlitFloatToProducer(device.Get(),immediate.Get(),chain.Get(),hudHdrOwner.Get()))return 154;
+                    hudlessExpected=ReadBytes(device.Get(),immediate.Get(),producer.Get());
+                }
+                if(displayScale){
+                    std::vector<unsigned char> gameFinal(bridgeImage);
+                    for(int y=0;y<12;++y)for(int x=0;x<16*4;++x)gameFinal[size_t(y)*width*4+x]=255;
+                    std::vector<unsigned char> bottomUp(gameFinal.size());const size_t row=size_t(width)*4;
+                    for(int y=0;y<height;++y)std::memcpy(bottomUp.data()+y*row,gameFinal.data()+(height-1-y)*row,row);
+                    immediate->UpdateSubresource(gameBufferOwner.Get(),0,nullptr,bottomUp.data(),width*4,0);
+                    ComPtr<ID3D11RenderTargetView> gameView;if(FAILED(device->CreateRenderTargetView(gameBufferOwner.Get(),nullptr,&gameView)))return 158;
+                    auto gameTarget=gameView.Get();immediate->OMSetRenderTargets(1,&gameTarget,nullptr);
+                    // Negative frame: unsafe for HUD opacity (this HUD is copied, not drawn), so the
+                    // opaque difference mask applies as in the other non-recomposition modes.
+                    reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_FrameGenerationGetAfterHudEvent())(-i,nullptr);
+                    immediate->OMSetRenderTargets(1,&target,dsv.Get());
+                }else{
+                    std::vector<unsigned char> hud(16*12*4,255);D3D11_BOX box{0,0,0,16,12,1};
+                    immediate->UpdateSubresource(producer.Get(),0,&box,hud.data(),16*4,0);
+                }
             }
             if(i==1) {
                 if(FAILED(chain->Present(0,DXGI_PRESENT_TEST)) || StreamlinePresentedFrames()!=before)return 33;
@@ -818,14 +963,15 @@ int main(int argc,char** argv) {
                     printf("FG_MULTIPLIER_MEASURED requested=%dx effective=%dx baseFrames=32 SDK presents=%d\n",requestedMultiplier,multiplier,actual);
                 }
             }
-            if(fg && !hudHdrTarget && (i==4 || i==64)){
-                std::vector<unsigned char> readback(width*height*4);
-                if(FAILED(FrameBridgeInputReadback(chain.Get(),3,readback.data(),static_cast<unsigned>(readback.size()))) || readback!=bridgeImage)return 81;
+            if(fg && (i==4 || i==64)){
+                std::vector<unsigned char> readback(size_t(displayWidth)*displayHeight*4);
+                if(displayScale)hudlessExpected=PlaceImage(device.Get(),immediate.Get(),bridgeImage,width,height,displayWidth,displayHeight,content);
+                if(FAILED(FrameBridgeInputReadback(chain.Get(),3,readback.data(),static_cast<unsigned>(readback.size()))) || readback!=(hudHdrOwner || displayScale?hudlessExpected:bridgeImage))return 81;
                 std::vector<float> readDepth(width*height);
-                if(FAILED(FrameBridgeInputReadback(chain.Get(),1,readDepth.data(),static_cast<unsigned>(readback.size()))))return 82;
+                if(FAILED(FrameBridgeInputReadback(chain.Get(),1,readDepth.data(),static_cast<unsigned>(readDepth.size()*4))))return 82;
                 for(auto sample:readDepth)if(sample!=.5f)return 83;
                 std::vector<uint16_t> readMotion(width*height*2);
-                if(FAILED(FrameBridgeInputReadback(chain.Get(),2,readMotion.data(),static_cast<unsigned>(readback.size()))))return 84;
+                if(FAILED(FrameBridgeInputReadback(chain.Get(),2,readMotion.data(),static_cast<unsigned>(readMotion.size()*2))))return 84;
                 for(auto m:readMotion)if(XMConvertHalfToFloat(m)!=0.f)return 85;
                 if(uiRecomposition && !fsr){
                     std::vector<unsigned char> alpha(width*height);
@@ -833,7 +979,16 @@ int main(int argc,char** argv) {
                     for(int y=0;y<height;++y)for(int x=0;x<width;++x)if(alpha[y*width+x]!=(x<16 && y<12?255:0))return 144;
                     printf("FG_UI_ALPHA_VERIFIED unityFrame=%d display-size R8; HUD rectangle opaque; scene opacity excluded\n",i);
                 }
-                if(fsr){
+                if(fsr && displayScale){
+                    // The game-sized layer (HUD rectangle opaque white) placed in the rectangle.
+                    std::vector<unsigned char> layerGame(size_t(width)*height*4,0);
+                    for(int y=0;y<12;++y)for(int x=0;x<16*4;++x)layerGame[size_t(y)*width*4+x]=255;
+                    auto expected=PlaceImage(device.Get(),immediate.Get(),layerGame,width,height,displayWidth,displayHeight,content);
+                    std::vector<unsigned char> layer(size_t(displayWidth)*displayHeight*4);
+                    if(FAILED(FrameBridgeInputReadback(chain.Get(),5,layer.data(),static_cast<unsigned>(layer.size()))) || expected.empty() || layer!=expected)return 159;
+                    printf("FG_DISPLAY_SCALE_VERIFIED unityFrame=%d game=%dx%d chain=%ux%u rect=%u,%u %ux%u; HUD-less and UI layer placed from the game buffer; producer unused\n",
+                        i,width,height,displayWidth,displayHeight,content.left,content.top,content.width,content.height);
+                }else if(fsr){
                     // FSR presents the HUD-less image and composites this premultiplied layer.
                     std::vector<unsigned char> layer(width*height*4);
                     if(FAILED(FrameBridgeInputReadback(chain.Get(),5,layer.data(),static_cast<unsigned>(layer.size()))))return 145;
@@ -875,6 +1030,10 @@ int main(int argc,char** argv) {
                 // presentations and a batch reaching the selected multiplier.
                 printf("FG_MULTIPLIER_VERIFIED requested=%dx effective=%dx baseFrames=128 SDK presents=%d maxBatch=%d\n",requestedMultiplier,multiplier,RiskOfRainUpscaling_FrameGenerationPresentedFrames(),maxSdkFrames);
                 if(multiplier<2 || multiplier>requestedMultiplier || maxSdkFrames<multiplier || RiskOfRainUpscaling_FrameGenerationPresentedFrames()<128*multiplier*7/10)return 124;
+            }
+            if(displayScale){
+                printf("PASS: Frame Generation while Unity scales a %dx%d game into a %ux%u chain (rect %u,%u %ux%u).\n",width,height,displayWidth,displayHeight,content.left,content.top,content.width,content.height);
+                return 0; // The remaining routines write game-sized images into the producer.
             }
             auto fe=reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_FrameGenerationGetBeforeHudEvent());
             auto timing=[&](int frame){RiskOfRainUpscaling_FrameGenerationMarker(0,frame);RiskOfRainUpscaling_FrameGenerationMarker(1,frame);RiskOfRainUpscaling_FrameGenerationMarker(2,frame);fe(-frame,nullptr);};

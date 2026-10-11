@@ -152,7 +152,9 @@ public:
         // the HUD by comparing the HUD-less snapshot with the final frame.
         // Null when the HUD drew onto an unsupported target: interpolate the final image.
         if(!uiRegistered && request.hudless)config.HUDLessColor=Common(request.hudless);
-        config.generationRect={0,0,static_cast<int32_t>(desc.Width),static_cast<int32_t>(desc.Height)};config.frameID=frame;
+        // Depth/motion map onto the game image, which Unity may scale into part of the chain.
+        const auto& rect=request.content;
+        config.generationRect={static_cast<int32_t>(rect.left),static_cast<int32_t>(rect.top),static_cast<int32_t>(rect.width),static_cast<int32_t>(rect.height)};config.frameID=frame;
         enabled=true; // Attempt Off even if an On call partially fails.
         RequireFfx(ffx->configure(&context,&config.header),"FSR frame generation configure");
         lastFrame=frame;

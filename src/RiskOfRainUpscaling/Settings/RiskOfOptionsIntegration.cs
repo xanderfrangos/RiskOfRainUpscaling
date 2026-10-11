@@ -16,7 +16,7 @@ namespace RiskOfRainUpscaling
         internal const string Guid = "com.rune580.riskofoptions";
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        internal static void Register(ModSettings settings, GameFrameRateSetting frameRate, Func<bool> fsr, Func<bool> dlss, Action<string> warning)
+        internal static void Register(ModSettings settings, GameFrameRateSetting frameRate, Func<bool> dlss, Action<string> warning)
         {
             ModSettingsManager.SetModDescription("Adds upscaling and frame generation to Risk of Rain 2. This is offered in two flavors: DLSS or AMD FSR. Also supports frame generation (2x-6x on NVIDIA, 2x on FSR). Enabling frame generation requires a restart for the D3D12 bridge.", Plugin.Guid, "Risk of Rain Upscaling");
             try { ModSettingsManager.SetModIcon(LoadIcon(), Plugin.Guid, "Risk of Rain Upscaling"); }
@@ -54,6 +54,7 @@ namespace RiskOfRainUpscaling
                 var language = typeof(ModSettingsManager).Assembly.GetType("RiskOfOptions.Lib.LanguageApi");
                 var add = language?.GetMethod("Add", BindingFlags.Static | BindingFlags.NonPublic, null, new[] { typeof(string), typeof(string) }, null);
                 if (add == null) throw new MissingMethodException("RiskOfOptions language labels");
+                Label(add, quality, nameof(DlssQualityLevel.DLAA), "DLAA/Native AA");
                 Label(add, quality, nameof(DlssQualityLevel.UltraPerformance), "Ultra Performance");
                 Label(add, preset, nameof(DlssPreset.Default), "Default (NVIDIA per mode)");
                 Label(add, preset, nameof(DlssPreset.K), "K (transformer)");
@@ -64,14 +65,6 @@ namespace RiskOfRainUpscaling
                 Label(add, outlines, nameof(OutlineMode.FullResolution), "Full Resolution");
                 foreach (FrameGenerationMode mode in Enum.GetValues(typeof(FrameGenerationMode)))
                     if (mode != FrameGenerationMode.Off) Label(add, generation, mode.ToString(), ((int)mode + 1) + "x");
-                // FSR calls 100% rendering Native AA. RoO resolves this label whenever a dropdown shows it.
-                var addDelegate = language.GetMethod("AddDelegate", BindingFlags.Static | BindingFlags.NonPublic);
-                var labelType = language.GetNestedType("LanguageStringDelegate", BindingFlags.NonPublic);
-                if (addDelegate == null || labelType == null) throw new MissingMethodException("RiskOfOptions dynamic labels");
-                string nativeAa = Token(quality, nameof(DlssQualityLevel.DLAA));
-                var label = new DynamicLabel(() => fsr() ? "Native AA" : "DLAA");
-                addDelegate.Invoke(null, new object[] { nativeAa, Delegate.CreateDelegate(labelType, label, nameof(DynamicLabel.Get)) });
-                settings.Upscaler.SettingChanged += (_, __) => Refresh(nativeAa);
             }
             catch (Exception e) { warning("Risk of Options choice labels use enum names: " + e.Message); }
         }
@@ -96,20 +89,6 @@ namespace RiskOfRainUpscaling
         private static void Label(MethodInfo add, BaseOption option, string value, string label) => add.Invoke(null, new object[] { Token(option, value), label });
         private static string Token(BaseOption option, string value) =>
             ("RISK_OF_OPTIONS." + option.ModGuid + "." + option.Category + "." + option.Name + ".choice.item." + value).Replace(" ", "_").ToUpper();
-
-        // Open labels resolve again only when their token changes.
-        private static void Refresh(string token)
-        {
-            foreach (var label in UnityEngine.Object.FindObjectsOfType<RoR2.UI.LanguageTextMeshController>())
-                if (label.token == token) { label.token = ""; label.token = token; }
-        }
-
-        private sealed class DynamicLabel
-        {
-            private readonly Func<string> text;
-            internal DynamicLabel(Func<string> text) { this.text = text; }
-            public string Get() => text();
-        }
 
         private sealed class GameFrameRateOption : IntFieldOption
         {

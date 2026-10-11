@@ -132,11 +132,11 @@ bool FrameGenerationPresentUi(ID3D12Resource* layer){
         return false;
     }
 }
-bool FrameGenerationPrepare(const CameraFrame& packet,ID3D12Resource* depth,ID3D12Resource* motion,ID3D12Resource* hudless,ID3D12Resource* uiAlpha,const DXGI_SWAP_CHAIN_DESC1& desc,UINT interval,UINT renderWidth,UINT renderHeight){
+bool FrameGenerationPrepare(const CameraFrame& packet,ID3D12Resource* depth,ID3D12Resource* motion,ID3D12Resource* hudless,ID3D12Resource* uiAlpha,const DXGI_SWAP_CHAIN_DESC1& desc,UINT interval,UINT renderWidth,UINT renderHeight,const DisplayRect& content){
     if(!FrameGenerationWanted())return false;
     if(!FrameGenerationUIAvailable())uiAlpha=nullptr;
     const int requestedMultiplier=f->requestedMultiplier.load();
-    FrameGenerationRequest request{packet,depth,motion,hudless,uiAlpha,false,desc,interval,renderWidth,renderHeight,requestedMultiplier};
+    FrameGenerationRequest request{packet,depth,motion,hudless,uiAlpha,false,desc,interval,renderWidth,renderHeight,requestedMultiplier,content};
     try {
         const char* offReason=nullptr;
         const int multiplier=f->backend->Prepare(request,offReason);

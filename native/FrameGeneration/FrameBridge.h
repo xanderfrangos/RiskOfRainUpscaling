@@ -8,7 +8,8 @@ bool BuildingFrameBridge();
 bool FrameBridgeRequested();
 bool FrameBridgeWindowEligible(HWND);
 // Called on the D3D11 render thread after a successful DLAA evaluation.
-void FrameBridgeSubmitInputs(const CameraFrame&, ID3D11Texture2D*, ID3D11Texture2D*);
+// outputWidth/outputHeight: Unity's game resolution (the upscaler output); 0 means the chain's size.
+void FrameBridgeSubmitInputs(const CameraFrame&, ID3D11Texture2D*, ID3D11Texture2D*, UINT outputWidth = 0, UINT outputHeight = 0);
 void FrameBridgeBeforeHud(int, bool captureUi=true);
 void FrameBridgeAfterHud(int, bool);
 void FrameBridgeRenderFrame(int);
