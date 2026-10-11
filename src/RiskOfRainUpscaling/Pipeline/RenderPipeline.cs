@@ -145,8 +145,9 @@ namespace RiskOfRainUpscaling
             {
                 Detach("camera/resolution/configuration changed");
                 try { active = new PipelineResources(rig, width, height, inputWidth, inputHeight, low); Attach(dlss); }
-                catch (Exception exception) { active?.Restore(); if (active != null) Retire(active); active = null; attachFailed = true;
-                    upscaling.Value=false;
+                catch (Exception exception) { active?.Restore(); if (active != null) Retire(active); active = null;
+                    // After the setting change: its SettingChanged handler clears attachFailed.
+                    upscaling.Value=false; attachFailed = true;
                     Block("Attach failed: " + exception.Message + "; renderer restored and paused. The Toggle Upscaling shortcut explicitly retries; restart also resets it. See native.log."); return; }
             }
             active.Scene.depthTextureMode |= DepthTextureMode.Depth | DepthTextureMode.MotionVectors;
