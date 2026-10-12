@@ -1,4 +1,5 @@
 #include "Upscaling/UpscalerContext.h"
+#include "Upscaling/Upscaler.h"
 #include "Presentation/StreamlinePresentation.h"
 #include "FrameGeneration/FrameBridge.h"
 #include "Presentation/GraphicsHooks.h"
@@ -254,6 +255,11 @@ static CameraFrame Frame(int index) {
 }
 // FG constants must describe the top-down swap chain, not Unity's flipped RT space.
 // Unity scales a smaller game resolution into the window aspect-fit and centred.
+// Auto keeps FSR3/4 DX12 only when the SDK's default version name is FSR 4 or later.
+static bool FfxVersionCheck() {
+    return FfxMajorVersion("3.1.5")==3 && FfxMajorVersion("2.3.4")==2 && FfxMajorVersion("4.0.2")==4
+        && FfxMajorVersion("FSR 4.1.0")==4 && FfxMajorVersion("10.0.0")==10 && FfxMajorVersion("")==0 && FfxMajorVersion("?")==0;
+}
 static bool GameRectCheck() {
     auto same=[](DisplayRect r,unsigned l,unsigned t,unsigned w,unsigned h){return r.left==l && r.top==t && r.width==w && r.height==h;};
     return same(GameRect(2560,1440,2560,1440),0,0,2560,1440)    // Same size: the whole chain.
@@ -779,6 +785,7 @@ int main(int argc,char** argv) {
         if(RiskOfRainUpscaling_SetSharpness(invalid)!=-1)return 110;
     if(!FrameGenerationSpaceCheck())return 141;
     if(!GameRectCheck())return 155;
+    if(!FfxVersionCheck())return 173;
     bool hardware=false,bridge=false,fg=false,visible=false,appWaitable=false,reflexLimit=false,fgLive=false;
     bool uiRecomposition=false,fsr=false;
     for(int i=1;i<argc;++i)uiRecomposition|=!std::strcmp(argv[i],"--ui-recomposition");

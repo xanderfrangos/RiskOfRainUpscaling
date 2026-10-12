@@ -208,8 +208,7 @@ public:
     }
     unsigned PresentedFrames() const override { return 0; }
     int Kind() const override { return 2; }
-    // Version names start with the major version ("3.1.5", "4.0.2").
-    bool DefaultIsFsr4() const { return !defaultVersion.empty() && defaultVersion[0]>='4' && defaultVersion[0]<='9'; }
+    bool DefaultIsFsr4() const { return FfxMajorVersion(defaultVersion)>=4; }
 };
 std::unique_ptr<UpscalerFeature> CreateFsrFeature(ID3D11Device* device) { return std::make_unique<FsrFeature>(device); }
 std::unique_ptr<UpscalerFeature> CreateFsr4Feature(ID3D11Device* device) {

@@ -1,5 +1,6 @@
 #pragma once
 #include "Upscaling/UpscalerContext.h"
+#include <cstdlib>
 #include <memory>
 #include <string>
 
@@ -55,6 +56,13 @@ std::unique_ptr<UpscalerFeature> CreateDlssFeature(ID3D11Device*);
 // True once DLSS started in this process; later DLSS failures stay latched until restart.
 bool DlssEverReady();
 std::unique_ptr<UpscalerFeature> CreateFsrFeature(ID3D11Device*);
+// The major version in a FidelityFX version name: its first number, so "3.1.5", "4.0.2",
+// "FSR 4.1.0" and "10.0.0" all read correctly; 0 without one. The SDK's version ids
+// are opaque provider ids (never to be hard-coded), so the name is what says FSR 4.
+inline unsigned long FfxMajorVersion(const std::string& name) {
+    const auto digit=name.find_first_of("0123456789");
+    return digit==std::string::npos?0:std::strtoul(name.c_str()+digit,nullptr,10);
+}
 // The FSR3/4 DX12 feature when the SDK's default upscaler for this adapter is FSR 4, otherwise null.
 std::unique_ptr<UpscalerFeature> CreateFsr4Feature(ID3D11Device*);
 std::unique_ptr<UpscalerFeature> CreateFsrDx11Feature(ID3D11Device*);
