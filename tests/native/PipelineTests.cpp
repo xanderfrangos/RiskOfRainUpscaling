@@ -20,8 +20,10 @@
 #include <chrono>
 
 static int width=256, height=144;
-// --fsr-upscaler: every context uses FSR, which has no alpha upscaling (temporal outlines fall back).
+// --fsr-upscaler: every context uses FSR3/4 DX12, --fsr3-dx11-upscaler FSR 3 DX11. FSR has no
+// alpha upscaling (temporal outlines fall back).
 static bool fsrUpscaler=false;
+static int fsrKind=2; // RiskOfRainUpscaling_UpscalerKind of the selected FSR path
 // Streamline's presentation hooks count each present only when DLSS runs.
 static unsigned PresentStep(){return fsrUpscaler?0u:1u;}
 // --hud-render-texture: like a Unity HUD camera with an image effect, the HUD draws
@@ -688,6 +690,89 @@ static int PrePostUpscaleFixture(ID3D11Device* device,ID3D11DeviceContext* immed
     else printf("PASS: before-post-processing upscaling without a supported runtime gives a sanitized bilinear HDR output (peak %.2f) and leaves the scene bit-exact; fallback/RCAS events validated.\n",evaluatedPeak);
     return 0;
 }
+// Motion: the camera pans across a smooth textured background (2 render pixels a
+// frame) while a bright square moves the other way (3 a frame), with matching
+// motion vectors. Before post-processing (as in game) the square is HDR; at the
+// end of effects it is LDR. The output must match the current frame: the
+// background where it is now, no trail where the square was, and the square at
+// its current position. History that misses motion smears.
+static int MotionFixture(ID3D11Device* device,ID3D11DeviceContext* immediate,IDXGISwapChain* chain,int firstFrame,bool beforePost) {
+    using namespace DirectX::PackedVector;
+    const int outW=width,outH=height,inW=(outW*2+1)/3,inH=(outH*2+1)/3;
+    const int size=12,top=inH/2-size/2,startX=20,speed=3,pan=2,frames=32;
+    const float bright=beforePost?4.f:1.f;
+    // Background in screen render-pixel coordinates at a frame; the camera pans right, so it slides left.
+    auto background=[&](float x,float y,int frame){
+        const float sx=x+static_cast<float>(pan*frame);
+        return .3f+.25f*std::sin(6.2831853f*sx/24)*std::cos(6.2831853f*y/18);};
+    const UINT both=D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_RENDER_TARGET;
+    std::vector<uint16_t> zeros(outW*outH*4,0),scene(inW*inH*4);
+    std::vector<float> motions(inW*inH*4);
+    auto color=Texture(device,DXGI_FORMAT_R16G16B16A16_TYPELESS,both,nullptr,0,inW,inH);
+    auto output=Texture(device,DXGI_FORMAT_R16G16B16A16_TYPELESS,both,zeros.data(),outW*8,outW,outH);
+    auto depth=Texture(device,DXGI_FORMAT_R32G32B32A32_TYPELESS,both,nullptr,0,inW,inH),motion=Texture(device,DXGI_FORMAT_R32G32B32A32_TYPELESS,both,nullptr,0,inW,inH);
+    std::vector<float> depths(inW*inH,.5f);
+    auto sceneDepth=Texture(device,DXGI_FORMAT_R32_TYPELESS,D3D11_BIND_DEPTH_STENCIL,depths.data(),inW*4,inW,inH);
+    if(!color||!output||!depth||!motion||!sceneDepth)return 240;
+    D3D11_SHADER_RESOURCE_VIEW_DESC sd{};sd.Format=DXGI_FORMAT_R32G32B32A32_FLOAT;sd.ViewDimension=D3D11_SRV_DIMENSION_TEXTURE2D;sd.Texture2D.MipLevels=1;
+    D3D11_RENDER_TARGET_VIEW_DESC rd{};rd.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;rd.ViewDimension=D3D11_RTV_DIMENSION_TEXTURE2D;
+    D3D11_DEPTH_STENCIL_VIEW_DESC ds{};ds.Format=DXGI_FORMAT_D32_FLOAT;ds.ViewDimension=D3D11_DSV_DIMENSION_TEXTURE2D;
+    ComPtr<ID3D11ShaderResourceView> motionSRV;ComPtr<ID3D11RenderTargetView> rtv;ComPtr<ID3D11DepthStencilView> dsv;
+    if(FAILED(device->CreateShaderResourceView(motion.Get(),&sd,&motionSRV)) || FAILED(device->CreateRenderTargetView(color.Get(),&rd,&rtv)) ||
+       FAILED(device->CreateDepthStencilView(sceneDepth.Get(),&ds,&dsv)))return 241;
+    SceneInputsDescription b{sizeof(b),4,inW,inH,depth.Get()};
+    auto bc=RiskOfRainUpscaling_SceneInputsCreate(&b);if(!bc)return 242;
+    UpscalerDescription d{sizeof(d),2,inW,inH,bc,color.Get(),depth.Get(),motion.Get(),output.Get(),outW,outH,1,beforePost?1:0};
+    auto c=RiskOfRainUpscaling_UpscalerCreate(&d);if(!c)return 243;
+    auto ce=reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_UpscalerGetEvaluateEvent());
+    auto be=reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_SceneInputsGetEvent());
+    auto bf=reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_SceneInputsGetFrameEvent());
+    ce(-2,c);if(RiskOfRainUpscaling_UpscalerState(c)!=1)return 244;
+    auto target=rtv.Get();
+    for(int frame=0;frame<frames;++frame){
+        const int left=startX+speed*frame;
+        // Unity's motion is the current minus the previous UV.
+        for(int y=0;y<inH;++y)for(int x=0;x<inW;++x){
+            const bool inside=x>=left && x<left+size && y>=top && y<top+size;const auto i=(y*inW+x)*4;
+            const uint16_t v=XMConvertFloatToHalf(inside?bright:background(static_cast<float>(x),static_cast<float>(y),frame));
+            scene[i]=scene[i+1]=scene[i+2]=v;scene[i+3]=XMConvertFloatToHalf(1.f);
+            motions[i]=frame?static_cast<float>(inside?speed:-pan)/inW:0.f;motions[i+1]=motions[i+2]=motions[i+3]=0;}
+        immediate->UpdateSubresource(color.Get(),0,nullptr,scene.data(),inW*8,0);
+        immediate->UpdateSubresource(motion.Get(),0,nullptr,motions.data(),inW*16,0);
+        auto f=Frame(firstFrame+frame);f.reset=frame==0;
+        if(RiskOfRainUpscaling_UpscalerSubmitFrame(c,&f))return 245;
+        bf(firstFrame+frame,bc);immediate->OMSetRenderTargets(1,&target,dsv.Get());be(90,bc);be(100,bc);
+        auto srv=motionSRV.Get();immediate->PSSetShaderResources(0,1,&srv);be(102,bc);
+        ce(firstFrame+frame,c);if(RiskOfRainUpscaling_UpscalerState(c)!=2)return 246;
+        if(chain && FAILED(chain->Present(0,0)))return 247;
+    }
+    // Mean absolute error against the current frame over render-space rectangles
+    // mapped to the output, inset by a pixel: a fraction of the square's brightness
+    // on the square, of the background's contrast (.5) elsewhere.
+    auto pixels=Read(device,immediate,output.Get());if(pixels.size()!=zeros.size())return 248;
+    const int last=frames-1;const float left=static_cast<float>(startX+speed*last);
+    auto error=[&](float x0,float x1,float y0,float y1,bool square){
+        const float sx=static_cast<float>(outW)/inW,sy=static_cast<float>(outH)/inH;double sum=0;int count=0;
+        for(int y=static_cast<int>(std::ceil(y0*sy))+1;y<static_cast<int>(y1*sy)-1;++y)for(int x=static_cast<int>(std::ceil(x0*sx))+1;x<static_cast<int>(x1*sx)-1;++x){
+            const float expected=square?bright:background((x+.5f)/sx-.5f,(y+.5f)/sy-.5f,last);
+            sum+=std::abs(XMConvertHalfToFloat(pixels[(y*outW+x)*4])-expected);++count;}
+        return count?static_cast<float>(sum/count)/(square?bright:.5f):1.f;};
+    // The trail covers where the square was two to eight frames ago, clear of its current edge.
+    const float trail=error(left-8*speed,left-speed,static_cast<float>(top),static_cast<float>(top+size),false);
+    const float square=error(left,left+size,static_cast<float>(top),static_cast<float>(top+size),true);
+    // The background above and below the square's rows, clear of the frame edges.
+    const float above=error(4,static_cast<float>(inW-4),4,static_cast<float>(top-4),false),below=error(4,static_cast<float>(inW-4),static_cast<float>(top+size+4),static_cast<float>(inH-4),false);
+    const float surroundings=std::max(above,below);
+    ce(-1,c);RiskOfRainUpscaling_UpscalerDestroy(c);be(199,bc);RiskOfRainUpscaling_SceneInputsDestroy(bc);
+    printf("MOTION %s error trail=%.4f square=%.4f background=%.4f\n",beforePost?"before-post HDR":"end-of-effects LDR",trail,square,surroundings);
+    // RTX 5080, HDR/LDR trail, square, background: DLSS .011/.017 .001/.005 .010/.018; both FSR paths
+    // .057/.058 .001/.004 .039/.063. FSR 3 DX11 without its shared dilated resources (no motion,
+    // smearing in game) measured .097/.103 .045/.062 .098/.103.
+    if(trail>.08f || square>.02f || surroundings>.08f)return 249;
+    printf("PASS: %s camera pan (%d render px/frame) with a square moving %d px/frame, %d frames %dx%d -> %dx%d: output matches the current frame (error trail %.3f, square %.3f, background %.3f).\n",
+        beforePost?"before-post-processing HDR":"end-of-effects LDR",pan,speed,frames,inW,inH,outW,outH,trail,square,surroundings);
+    return 0;
+}
 int main(int argc,char** argv) {
     for(float invalid:{-0.1f,1.1f,std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity()})
         if(RiskOfRainUpscaling_SetSharpness(invalid)!=-1)return 110;
@@ -698,6 +783,7 @@ int main(int argc,char** argv) {
     for(int i=1;i<argc;++i)uiRecomposition|=!std::strcmp(argv[i],"--ui-recomposition");
     for(int i=1;i<argc;++i)fsr|=!std::strcmp(argv[i],"--fsr");
     for(int i=1;i<argc;++i)fsrUpscaler|=!std::strcmp(argv[i],"--fsr-upscaler");
+    for(int i=1;i<argc;++i)if(!std::strcmp(argv[i],"--fsr3-dx11-upscaler")){fsrUpscaler=true;fsrKind=3;}
     bool hudRenderTextureMode=false;for(int i=1;i<argc;++i)hudRenderTextureMode|=!std::strcmp(argv[i],"--hud-render-texture");
     // --hud-hdr-target: as at native resolution in game, the HUD draws onto an RGBA16F
     // RenderTexture (bottom-up linear values) and its image effect's final blit encodes
@@ -709,7 +795,7 @@ int main(int argc,char** argv) {
     // screen buffer when the HUD camera finishes, and the producer is never used.
     bool displayScale=false;for(int i=1;i<argc;++i)displayScale|=!std::strcmp(argv[i],"--display-scale");
     if(displayScale)hudRenderTextureMode=true;
-    if(fsrUpscaler && RiskOfRainUpscaling_SetUpscalerBackend(2))return 148;
+    if(fsrUpscaler && RiskOfRainUpscaling_SetUpscalerBackend(fsrKind))return 148;
     int requestedMultiplier=2,presentsAt32=0,maxSdkFrames=0;
     const int liveMultipliers[]{2,3,4,5,6,5,3,2};
     int blockPresents=0,blockMaxBatch=0,liveMaxMultiplier=2;
@@ -736,7 +822,9 @@ int main(int argc,char** argv) {
         std::atexit([]{RiskOfRainUpscaling_ProfilerSetEnabled(0);});
     }
     ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> immediate;
-    if(FAILED(D3D11CreateDevice(nullptr,hardware?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,nullptr,&immediate)))return 1;
+    // Feature level 11_1, as Unity creates the game's device; FSR 3 DX11 binds more than 8 compute UAVs.
+    const D3D_FEATURE_LEVEL levels[]{D3D_FEATURE_LEVEL_11_1,D3D_FEATURE_LEVEL_11_0};
+    if(FAILED(D3D11CreateDevice(nullptr,hardware?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP,nullptr,0,levels,2,D3D11_SDK_VERSION,&device,nullptr,&immediate)))return 1;
     if(!LetterboxCheck(device.Get(),immediate.Get()))return 156;
     ComPtr<ID3D11Texture2D> hudRenderTextureOwner,hudHdrOwner;
     if(displayScale && (!fg || uiRecomposition || hudHdrTarget || reflexLimit || fgLive || appWaitable))return 157;
@@ -814,9 +902,10 @@ int main(int argc,char** argv) {
     ComPtr<ID3D11RenderTargetView> restored;immediate->OMGetRenderTargets(1,&restored,nullptr);
     if(restored.Get()!=rtv.Get())return 13;
     if(noHooks) {
-        // DLSS could never present: Auto upscales with FSR, and an explicit DLSS choice is
-        // unavailable at creation instead of failing after 60 evaluations.
-        if(RiskOfRainUpscaling_UpscalerState(c)!=1 || RiskOfRainUpscaling_UpscalerKind(c)!=2)return 160;
+        // DLSS could never present: Auto upscales with FSR (FSR 3 DX11 unless FSR 4 is offered),
+        // and an explicit DLSS choice is unavailable at creation instead of failing after 60 evaluations.
+        const int autoKind=RiskOfRainUpscaling_UpscalerKind(c);
+        if(RiskOfRainUpscaling_UpscalerState(c)!=1 || (autoKind!=2 && autoKind!=3))return 160;
         if(RiskOfRainUpscaling_SetUpscalerBackend(1))return 161;
         auto explicitDlss=RiskOfRainUpscaling_UpscalerCreate(&d);RiskOfRainUpscaling_SetUpscalerBackend(0);
         if(!explicitDlss)return 161;
@@ -878,7 +967,7 @@ int main(int argc,char** argv) {
             f=Frame(i);if(i>1 && RiskOfRainUpscaling_UpscalerSubmitFrame(c,&f))return 17;
             bf(i,bc);immediate->OMSetRenderTargets(1,&target,dsv.Get());be(90,bc);be(100,bc);
             auto srv=motionSRV.Get();immediate->PSSetShaderResources(0,1,&srv);be(102,bc);
-            ce(i,c);if(RiskOfRainUpscaling_UpscalerState(c)!=2 || RiskOfRainUpscaling_UpscalerKind(c)!=(fsrUpscaler?2:1))return 18;
+            ce(i,c);if(RiskOfRainUpscaling_UpscalerState(c)!=2 || RiskOfRainUpscaling_UpscalerKind(c)!=(fsrUpscaler?fsrKind:1))return 18;
             restored.Reset();immediate->OMGetRenderTargets(1,&restored,nullptr);
             D3D11_VIEWPORT vp{};UINT count=1;immediate->RSGetViewports(&count,&vp);
             if(restored.Get()!=rtv.Get() || count!=1 || vp.TopLeftX!=3 || vp.Width!=5)return 19;
@@ -1131,6 +1220,8 @@ int main(int argc,char** argv) {
         if(int failed=UpscaleFixture(device.Get(),immediate.Get(),true,chain.Get()))return failed;
         if(int failed=PrePostFixture(device.Get(),immediate.Get(),true,chain.Get(),200))return failed;
         if(int failed=PrePostUpscaleFixture(device.Get(),immediate.Get(),true,chain.Get(),300))return failed;
+        if(int failed=MotionFixture(device.Get(),immediate.Get(),chain.Get(),400,true))return failed;
+        if(int failed=MotionFixture(device.Get(),immediate.Get(),chain.Get(),500,false))return failed;
         // Re-enable with the same owned SDK after retiring the old feature context.
         c=RiskOfRainUpscaling_UpscalerCreate(&d);if(!c)return 25;ce(-2,c);if(RiskOfRainUpscaling_UpscalerState(c)!=1)return 26;
         f=Frame(130);f.reset=1;if(RiskOfRainUpscaling_UpscalerSubmitFrame(c,&f))return 27;
@@ -1139,9 +1230,10 @@ int main(int argc,char** argv) {
         ce(130,c);if(RiskOfRainUpscaling_UpscalerState(c)!=2)return 28;
         if(FAILED(chain->Present(0,0)))return 40;
         if(fsrUpscaler){
-            // FSR runs on its own D3D12 queue and has no presentation hooks to lose.
+            // FSR has no presentation hooks to lose.
             ce(-1,c);if(RiskOfRainUpscaling_UpscalerState(c)!=-1)return 29;RiskOfRainUpscaling_UpscalerDestroy(c);
-            printf("PASS: FSR re-enables and evaluates after resource retirement; D3D11 to D3D12 interop on a private queue.\n");
+            if(fsrKind==3)printf("PASS: FSR 3 DX11 re-enables and evaluates after resource retirement on the D3D11 device.\n");
+            else printf("PASS: FSR re-enables and evaluates after resource retirement; D3D11 to D3D12 interop on a private queue.\n");
         }else{
         // Lose presentation coverage deliberately. Stop before the SDK would
         // emit its warning, and restore the exact original image.

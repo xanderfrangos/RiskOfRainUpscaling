@@ -18,7 +18,7 @@ Introduces upscaling and frame generation to Risk of Rain 2, using **NVIDIA DLSS
 | NVIDIA RTX 20 and 30 series | DLSS | FSR, 2x |
 | AMD, Intel and others | FSR | FSR, 2x |
 
-The mod picks the right option for your card automatically. Windows only for now; it hasn't been tested on AMD hardware, Linux or Steam Deck yet.
+The mod picks the right option for your card automatically. FSR comes in two versions under **Upscaler**: **FSR 3 DX11** runs directly on the game's DirectX 11 renderer and is the lighter one; **FSR3/4 DX12** adds FSR 4 on supported AMD GPUs but runs on a separate DirectX 12 queue, which costs extra every frame. Auto uses FSR3/4 DX12 only when FSR 4 is available. Windows only for now; it hasn't been tested on AMD hardware, Linux or Steam Deck yet.
 
 ## Install
 
@@ -61,7 +61,7 @@ Change settings in-game under **Settings → Mod Options → Risk of Rain Upscal
 | Section | Settings |
 | --- | --- |
 | `[General]` | `Enabled`: master switch for everything the mod does. |
-| `[Upscaling]` | `Enabled`, `Quality` (default DLAA), `Upscaler` (Auto, DLSS, FSR), `DLSS Preset`, `Outlines`, `Sharpening`, `MipBiasOffset`, `MainMenu`. |
+| `[Upscaling]` | `Enabled`, `Quality` (default DLAA), `Upscaler` (Auto, DLSS, FSR3DX11 = FSR 3 DX11, FSR = FSR3/4 DX12), `DLSS Preset`, `Outlines`, `Sharpening`, `MipBiasOffset`, `MainMenu`. |
 | `[Frame Generation]` | `Enabled` (default off), `Multiplier`, `Backend` (Auto, DLSS, FSR), `ReflexFrameLimiter`. Turning Frame Generation on when it was off at startup needs a restart; changing `Backend` always does. |
 | `[Diagnostics]` | `Logging Level` (default Off), `ShowOverlay`, `CaptureWhileOff`, `TraceGraphicsStartup` (leave on; DLSS and Frame Generation need it). |
 | `[Hotkeys]` | `Enable Hotkeys` (default off) and five rebindable shortcuts. |

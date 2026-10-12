@@ -101,6 +101,9 @@ internal static class ModSettingsTests
                 reloaded.Upscaler.Value == UpscalerBackend.FSR && reloaded.Generation.Backend.Value == FrameGenerationBackend.FSR &&
                 reloaded.QualityLevel == DlssQualityLevel.Off && reloaded.Quality.Value == DlssQuality.Quality && reloaded.GenerationMode == FrameGenerationMode.SixX,
                 "persist settings");
+            // "FSR" stays the FSR3/4 DX12 path for existing configs; the D3D11 path has its own name.
+            reloaded.Upscaler.Value = UpscalerBackend.FSR3DX11; reloaded.Upscaler.ConfigFile.Save();
+            Check(new ModSettings(new ConfigFile(path, false)).Upscaler.Value == UpscalerBackend.FSR3DX11, "persist FSR 3 DX11 upscaler");
             Console.WriteLine("PASS: fresh defaults and sections, backend defaults, quality/FG choices, logging thresholds, hotkey defaults/combinations/disable, notifications, bounds and persistence.");
         }
         finally { Directory.Delete(folder, true); }

@@ -5,9 +5,9 @@
 #include <stdexcept>
 
 static std::atomic<int> requestedUpscaler{static_cast<int>(UpscalerBackend::Auto)};
-// 0 Auto, 1 DLSS, 2 FSR. Applies to contexts created afterwards.
+// 0 Auto, 1 DLSS, 2 FSR3/4 DX12, 3 FSR 3 DX11. Applies to contexts created afterwards.
 extern "C" __declspec(dllexport) int __cdecl RiskOfRainUpscaling_SetUpscalerBackend(int backend) {
-    if(backend<0 || backend>2) return -1;
+    if(backend<0 || backend>3) return -1;
     requestedUpscaler.store(backend); return 0;
 }
 UpscalerBackend RequestedUpscaler() { return static_cast<UpscalerBackend>(requestedUpscaler.load()); }
@@ -53,5 +53,25 @@ std::unique_ptr<UpscalerFeature> CreateUpscalerFeature(ID3D11Device* device, Ups
             }
         }
     }
-    return CreateFsrFeature(device);
+    if(backend==UpscalerBackend::FSR) return CreateFsrFeature(device);
+    if(backend==UpscalerBackend::FSR3DX11) return CreateFsrDx11Feature(device);
+    // Auto without DLSS: FSR 4 needs D3D12, so the D3D12 path runs only when the SDK
+    // offers FSR 4 for this adapter. FSR 3 runs on D3D11, without the D3D12 round trip,
+    // on feature level 11_1 devices (Unity's).
+    if(device->GetFeatureLevel()<D3D_FEATURE_LEVEL_11_1) {
+        Log("UPSCALER_AUTO feature level 0x%x is below FSR 3 DX11's 11_1; Auto selects FSR3/4 DX12",static_cast<unsigned>(device->GetFeatureLevel()));
+        return CreateFsrFeature(device);
+    }
+    static std::atomic<int> fsr4{-1}; // -1 not probed yet, 0 not offered, 1 offered
+    if(fsr4.load()!=0) {
+        try {
+            if(auto feature=CreateFsr4Feature(device)) { fsr4=1; return feature; }
+            Log("UPSCALER_AUTO FSR 4 not offered for this adapter; Auto selects FSR 3 DX11");
+        } catch(const std::exception& e) {
+            if(fsr4.load()==1) throw;
+            Log(ModLogLevel::Warning,"UPSCALER_AUTO FSR3/4 DX12 unavailable (%s); Auto selects FSR 3 DX11",e.what());
+        }
+        fsr4=0;
+    }
+    return CreateFsrDx11Feature(device);
 }

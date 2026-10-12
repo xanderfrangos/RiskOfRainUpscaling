@@ -15,7 +15,7 @@ The build runs on Windows PowerShell 5.1 and uses PowerShell 7 when available.
 
 ## Build
 
-Double-click [Build.cmd](../Build.cmd). It finds the game, a usable mod profile and the build tools, downloads the pinned Streamline and FidelityFX SDK files on first use, and creates `build/package`. It also copies the built `BepInEx` folder into [Package](../Package) next to the Thunderstore manifest, README and icon, copies [CHANGELOG.md](../CHANGELOG.md) there, and sets the manifest's `version_number` to the plugin version from [Directory.Build.props](../Directory.Build.props). The window stays open with the result; the full log is saved to `build/Build.log`.
+Double-click [Build.cmd](../Build.cmd). It finds the game, a usable mod profile and the build tools, downloads the pinned Streamline, FidelityFX SDK and FidelityFX DX11 port files on first use, and creates `build/package`. It also copies the built `BepInEx` folder into [Package](../Package) next to the Thunderstore manifest, README and icon, copies [CHANGELOG.md](../CHANGELOG.md) there, and sets the manifest's `version_number` to the plugin version from [Directory.Build.props](../Directory.Build.props). The window stays open with the result; the full log is saved to `build/Build.log`.
 
 Automatic profile selection prefers a profile that already has this mod, then the newest usable profile.
 

@@ -131,7 +131,7 @@ namespace RiskOfRainUpscaling
         internal static ContextAction UpscalerDestroy;
         internal static IntSetter SetUpscalerBackend, SetDlssPreset;
         internal static FloatSetter SetSharpness;
-        internal static string UpscalerName(IntPtr context) => context == IntPtr.Zero || UpscalerKind == null ? "" : UpscalerKind(context) switch { 1 => "DLSS", 2 => "FSR", _ => "pending" };
+        internal static string UpscalerName(IntPtr context) => context == IntPtr.Zero || UpscalerKind == null ? "" : UpscalerKind(context) switch { 1 => "DLSS", 2 => "FSR3/4 DX12", 3 => "FSR 3 DX11", _ => "pending" };
         // Frame Generation and pacing.
         internal static IntAction FrameGenerationSetEnabled;
         internal static IntSetter FrameGenerationSetMultiplier, ReflexSetFrameLimit, FramePacerWait;

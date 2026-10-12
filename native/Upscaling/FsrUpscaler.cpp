@@ -50,7 +50,7 @@ class FsrFeature final : public UpscalerFeature {
     uint32_t contextFlags=0;
     UpscalerOptions current{};
     LARGE_INTEGER frequency{}, last{};
-    std::string versions;
+    std::string versions, defaultVersion;
 
     // Created on D3D11 with an NT handle and opened on D3D12, as the presentation
     // bridge shares its inputs. D3D12 sees it in COMMON.
@@ -135,7 +135,7 @@ public:
         query.createDescType=FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE; query.device=device12.Get();
         query.outputCount=&count; query.versionIds=ids; query.versionNames=names;
         if(ffx->query(nullptr,&query.header)==FFX_API_RETURN_OK)
-            for(uint64_t i=0;i<std::min<uint64_t>(count,8);++i){ if(i) versions+=", "; versions+=names[i]?names[i]:"?"; }
+            for(uint64_t i=0;i<std::min<uint64_t>(count,8);++i){ if(i) versions+=", "; versions+=names[i]?names[i]:"?"; if(!i && names[i]) defaultVersion=names[i]; }
         QueryPerformanceFrequency(&frequency);
         Log("FSR_READY D3D11 frame with private D3D12 queue on the same adapter; versions=[%s] (first is the default)",versions.c_str());
     }
@@ -208,5 +208,12 @@ public:
     }
     unsigned PresentedFrames() const override { return 0; }
     int Kind() const override { return 2; }
+    // Version names start with the major version ("3.1.5", "4.0.2").
+    bool DefaultIsFsr4() const { return !defaultVersion.empty() && defaultVersion[0]>='4' && defaultVersion[0]<='9'; }
 };
 std::unique_ptr<UpscalerFeature> CreateFsrFeature(ID3D11Device* device) { return std::make_unique<FsrFeature>(device); }
+std::unique_ptr<UpscalerFeature> CreateFsr4Feature(ID3D11Device* device) {
+    auto feature=std::make_unique<FsrFeature>(device);
+    if(!feature->DefaultIsFsr4()) return nullptr;
+    return feature;
+}

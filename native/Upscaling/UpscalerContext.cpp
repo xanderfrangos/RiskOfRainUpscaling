@@ -200,7 +200,7 @@ static void __stdcall EvaluateEvent(int event, void* pointer) {
                 return;
             }
             c->kind=c->feature->Kind();
-            const char* names[]{"Auto","DLSS","FSR"};
+            const char* names[]{"Auto","DLSS","FSR3/4 DX12","FSR 3 DX11"};
             Log("UPSCALER_SELECTED selected=%s preference=%s dlssPreset=%d (0 = NVIDIA default per mode)",names[c->kind.load()],names[static_cast<int>(c->upscaler)],c->preset);
             auto options=Options(*c);
             auto settings=c->feature->Sizes(options);
@@ -265,7 +265,8 @@ static void __stdcall EvaluateEvent(int event, void* pointer) {
         const UpscalerFrame frame{event,reset,!scene && c->perceptual,&f,scene || c->perceptual?c->encoded.Get():c->color.Get(),c->depth.Get(),c->motion.Get(),c->result.Get(),
             static_cast<UINT>(c->desc.width),static_cast<UINT>(c->desc.height),static_cast<UINT>(c->desc.outputWidth),static_cast<UINT>(c->desc.outputHeight)};
         {
-            ProfileScope p(c->kind.load()==2?PROFILE_LABEL("upscale.feature FSR (D3D11 side only; FSR runs on D3D12)"):
+            ProfileScope p(c->kind.load()==2?PROFILE_LABEL("upscale.feature FSR3/4 DX12 (D3D11 side only; FSR runs on D3D12)"):
+                c->kind.load()==3?PROFILE_LABEL("upscale.feature FSR 3 DX11"):
                 c->temporalOutlines?PROFILE_LABEL("upscale.feature DLSS (with alpha upscaling)"):PROFILE_LABEL("upscale.feature DLSS"));
             c->feature->Evaluate(c->immediate.Get(),frame);
             // Leave no SDK output bindings active when copying to Unity's sampled texture.

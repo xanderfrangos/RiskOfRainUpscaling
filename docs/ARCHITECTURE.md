@@ -29,7 +29,7 @@ BepInEx plugin    ──► RenderPipeline ──► native render events (scene
 | `Core/` | `Native.h` (shared includes, `Log`), module init and logging, `CameraFrame`, `FullscreenPass` and `D3D11StateScope` (native draws on Unity's context), `Fullscreen` vertex shader, FidelityFX runtime loading. |
 | `Presentation/` | `GraphicsHooks`: device/factory/swap-chain creation and Present/GetBuffer/Resize hooks installed by the preloader. `StreamlinePresentation`: routes D3D11 Present through the Streamline proxy so DLSS sees presentation. |
 | `SceneInputs/` | Same-frame raw depth (copied from the scene DSV), motion validation and the scene color after transparents. |
-| `Upscaling/` | `UpscalerContext` (create/submit/evaluate/fallback), `Sharpening` (RCAS), `Outlines`, backend selection and the DLSS and FSR backends. |
+| `Upscaling/` | `UpscalerContext` (create/submit/evaluate/fallback), `Sharpening` (RCAS), `Outlines`, backend selection and the DLSS, FSR3/4 DX12 (FidelityFX API on a private D3D12 queue) and FSR 3 DX11 (FidelityFX DX11 port, linked statically, with its shader lookup) backends. |
 | `FrameGeneration/` | `FrameBridge` (D3D11 swap-chain proxy presenting through D3D12), Frame Generation front end and DLSS/FSR backends, HUD opacity capture and UI layer. |
 | `Pacing/` | Frame-start limiter (`FramePacerWait`). |
 | `Diagnostics/` | Optional previews, final-image copy and capture. Its own context: a failure never affects upscaling. |

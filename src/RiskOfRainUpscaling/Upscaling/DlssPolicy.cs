@@ -6,8 +6,9 @@ namespace RiskOfRainUpscaling
     internal enum DlssQuality { DLAA, Quality, Balanced, Performance, UltraPerformance }
     // Where DLAA/DLSS runs in the scene camera. Native code receives 1 for before post-processing.
     internal enum DlaaPlacement { BeforePostProcessing, EndOfEffects }
-    // Super-resolution runtime. Native code: 0 Auto, 1 DLSS, 2 FSR (RiskOfRainUpscaling_SetUpscalerBackend).
-    internal enum UpscalerBackend { Auto, DLSS, FSR }
+    // Super-resolution runtime. Native code: 0 Auto, 1 DLSS, 2 FSR3/4 DX12, 3 FSR 3 DX11
+    // (RiskOfRainUpscaling_SetUpscalerBackend). FSR keeps its config name for existing configs.
+    internal enum UpscalerBackend { Auto, DLSS, FSR, FSR3DX11 }
     // DLSS model for every quality mode. Default keeps NVIDIA's per-mode choice.
     internal enum DlssPreset { Default, K, M, L, J, E }
 
@@ -21,7 +22,7 @@ namespace RiskOfRainUpscaling
             switch (quality)
             {
                 case DlssQuality.Quality: return 2f/3f;
-                case DlssQuality.Balanced: return backend == UpscalerBackend.FSR ? 1f/1.7f : 0.58f;
+                case DlssQuality.Balanced: return IsFsr(backend) ? 1f/1.7f : 0.58f;
                 case DlssQuality.Performance: return 0.5f;
                 case DlssQuality.UltraPerformance: return 1f/3f;
                 default: return 1f;
@@ -32,6 +33,7 @@ namespace RiskOfRainUpscaling
             if (output < 1) throw new ArgumentOutOfRangeException(nameof(output));
             return Math.Max(1, (int)Math.Round(output * (double)Scale(quality, backend)));
         }
+        internal static bool IsFsr(UpscalerBackend backend) => backend == UpscalerBackend.FSR || backend == UpscalerBackend.FSR3DX11;
         internal const int NvidiaVendorId = 0x10DE;
         // The sl::DLSSPreset value native code passes for every quality mode (RiskOfRainUpscaling_SetDlssPreset).
         internal static int NativePreset(DlssPreset preset)
@@ -47,12 +49,13 @@ namespace RiskOfRainUpscaling
             }
         }
         // The runtime that sizes the render target. Auto follows the runtime native
-        // code last selected for Auto (1 DLSS, 2 FSR), otherwise the GPU vendor.
+        // code last selected for Auto (1 DLSS, 2 FSR3/4 DX12, 3 FSR 3 DX11), otherwise
+        // the GPU vendor. Both FSR paths share FSR's render sizes.
         internal static UpscalerBackend Resolve(UpscalerBackend requested, int autoKind, bool nvidia)
         {
             if (requested != UpscalerBackend.Auto) return requested;
-            if (autoKind == 1 || autoKind == 2) return (UpscalerBackend)autoKind;
-            return nvidia ? UpscalerBackend.DLSS : UpscalerBackend.FSR;
+            if (autoKind >= 1 && autoKind <= 3) return (UpscalerBackend)autoKind;
+            return nvidia ? UpscalerBackend.DLSS : UpscalerBackend.FSR3DX11;
         }
         // Every quality can run before post-processing. DLAA writes the scene in
         // place; lower-resolution modes upscale into a display-sized texture and

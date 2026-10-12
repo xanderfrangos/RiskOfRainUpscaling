@@ -3,7 +3,7 @@
 #include <memory>
 #include <string>
 
-// Super-resolution backend (DLSS or FSR). Each upscaler context owns one
+// Super-resolution backend (DLSS, FSR3/4 on D3D12 or FSR 3 on D3D11). Each upscaler context owns one
 // feature. Calls run on Unity's render thread with streamlineMutex held and
 // the context's private D3D11 state bound; failures throw.
 struct UpscalerOptions {
@@ -38,19 +38,23 @@ public:
     virtual std::string Release() = 0;
     // Present calls serviced by the backend's presentation hooks (diagnostics).
     virtual unsigned PresentedFrames() const = 0;
-    // Values match RiskOfRainUpscaling_UpscalerKind: 1 DLSS, 2 FSR.
+    // Values match RiskOfRainUpscaling_UpscalerKind: 1 DLSS, 2 FSR3/4 DX12, 3 FSR 3 DX11.
     virtual int Kind() const = 0;
 };
 // Values match [Upscaling] Upscaler and RiskOfRainUpscaling_SetUpscalerBackend.
-enum class UpscalerBackend { Auto, DLSS, FSR };
+enum class UpscalerBackend { Auto, DLSS, FSR, FSR3DX11 }; // FSR is the FSR3/4 DX12 path.
 // The preference captured by RiskOfRainUpscaling_UpscalerCreate for its context.
 UpscalerBackend RequestedUpscaler();
 // The DLSS preset captured by RiskOfRainUpscaling_UpscalerCreate for its context.
 int RequestedDlssPreset();
 // Null with a reason when no backend supports this device's adapter. Throws
-// when the selected backend fails to start; Auto falls back from DLSS to FSR.
+// when the selected backend fails to start; Auto falls back from DLSS to FSR, and
+// uses FSR3/4 DX12 only when the SDK offers FSR 4, otherwise FSR 3 DX11.
 std::unique_ptr<UpscalerFeature> CreateUpscalerFeature(ID3D11Device*, UpscalerBackend, std::string& unavailable);
 std::unique_ptr<UpscalerFeature> CreateDlssFeature(ID3D11Device*);
 // True once DLSS started in this process; later DLSS failures stay latched until restart.
 bool DlssEverReady();
 std::unique_ptr<UpscalerFeature> CreateFsrFeature(ID3D11Device*);
+// The FSR3/4 DX12 feature when the SDK's default upscaler for this adapter is FSR 4, otherwise null.
+std::unique_ptr<UpscalerFeature> CreateFsr4Feature(ID3D11Device*);
+std::unique_ptr<UpscalerFeature> CreateFsrDx11Feature(ID3D11Device*);

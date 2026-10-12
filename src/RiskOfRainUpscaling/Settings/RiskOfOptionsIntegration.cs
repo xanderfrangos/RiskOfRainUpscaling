@@ -21,7 +21,8 @@ namespace RiskOfRainUpscaling
             ModSettingsManager.SetModDescription("Adds upscaling and frame generation to Risk of Rain 2. This is offered in two flavors: DLSS or AMD FSR. Also supports frame generation (2x-6x on NVIDIA, 2x on FSR). Enabling frame generation requires a restart for the D3D12 bridge.", Plugin.Guid, "Risk of Rain Upscaling");
             try { ModSettingsManager.SetModIcon(LoadIcon(), Plugin.Guid, "Risk of Rain Upscaling"); }
             catch (Exception e) { warning("Risk of Options icon unavailable: " + e.Message); }
-            Add(new ChoiceOption(settings.Upscaler, new ChoiceConfig { name = "Upscaler", category = "Graphics" }));
+            var upscaler = new ChoiceOption(settings.Upscaler, new ChoiceConfig { name = "Upscaler", category = "Graphics" });
+            Add(upscaler);
             var quality = new LiveChoice<DlssQualityLevel>("Upscaler Quality", settings.Quality.Description.Description,
                 () => settings.QualityLevel, value => settings.QualityLevel = value);
             Add(quality);
@@ -54,6 +55,8 @@ namespace RiskOfRainUpscaling
                 var language = typeof(ModSettingsManager).Assembly.GetType("RiskOfOptions.Lib.LanguageApi");
                 var add = language?.GetMethod("Add", BindingFlags.Static | BindingFlags.NonPublic, null, new[] { typeof(string), typeof(string) }, null);
                 if (add == null) throw new MissingMethodException("RiskOfOptions language labels");
+                Label(add, upscaler, nameof(UpscalerBackend.FSR), "FSR3/4 DX12");
+                Label(add, upscaler, nameof(UpscalerBackend.FSR3DX11), "FSR 3 DX11");
                 Label(add, quality, nameof(DlssQualityLevel.DLAA), "DLAA/Native AA");
                 Label(add, quality, nameof(DlssQualityLevel.UltraPerformance), "Ultra Performance");
                 Label(add, preset, nameof(DlssPreset.Default), "Default (NVIDIA per mode)");

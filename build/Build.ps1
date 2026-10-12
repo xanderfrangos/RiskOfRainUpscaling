@@ -80,6 +80,7 @@ foreach ($name in 'RoR2.dll','UnityEngine.CoreModule.dll','com.unity.multiplayer
 }
 $sdkFiles = @('Streamline\include\sl.h', 'Streamline\license.txt', 'FidelityFX-SDK\Kits\FidelityFX\api\include\ffx_api.h', 'FidelityFX-SDK\Kits\FidelityFX\docs\license.md')
 foreach ($name in 'amd_fidelityfx_loader_dx12.dll', 'amd_fidelityfx_framegeneration_dx12.dll', 'amd_fidelityfx_upscaler_dx12.dll') { $sdkFiles += "FidelityFX-SDK\Kits\FidelityFX\signedbin\$name" }
+$sdkFiles += 'FidelityFX-SDK-DX11\LICENSE.txt', 'FidelityFX-SDK-DX11\sdk\src\backends\dx11\ffx_dx11.cpp', 'FidelityFX-SDK-DX11\sdk\tools\binary_store\FidelityFX_SC.exe'
 if (@($sdkFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $projectRoot "third_party\$_") -PathType Leaf) }).Count -gt 0) {
     & (Join-Path $PSScriptRoot 'Fetch-SDK.ps1') -GitPath $git
 }
@@ -87,6 +88,10 @@ $sdkCommit = & $git -C (Join-Path $projectRoot 'third_party\Streamline') rev-par
 if ($LASTEXITCODE -ne 0 -or "$sdkCommit".Trim() -ne '2122257e0fce486f91b385aa63b9a09b0a34b363') { throw 'Unexpected Streamline header version.' }
 $ffxCommit = & $git -C (Join-Path $projectRoot 'third_party\FidelityFX-SDK') rev-parse HEAD
 if ($LASTEXITCODE -ne 0 -or "$ffxCommit".Trim() -ne '60f4ea81909200d8542eca14dccb2628b763a9a3') { throw 'Unexpected FidelityFX SDK version.' }
+$ffxDx11Commit = & $git -C (Join-Path $projectRoot 'third_party\FidelityFX-SDK-DX11') rev-parse HEAD
+if ($LASTEXITCODE -ne 0 -or "$ffxDx11Commit".Trim() -ne '9b04fa49abae5aa341c0007af13c8ba1b4ad9913') { throw 'Unexpected FidelityFX DX11 version.' }
+# Checkouts fetched before a patch was added get it here.
+Install-BuildPatches $git $projectRoot 'FidelityFX-SDK-DX11'
 
 Push-Location $projectRoot
 try {
@@ -136,6 +141,7 @@ try {
     Copy-Item -LiteralPath 'third_party\Streamline\license.txt' -Destination (Join-Path $plugin 'Streamline-LICENSE.txt') -Force
     Copy-Item -LiteralPath 'third_party\FidelityFX-SDK\Kits\FidelityFX\docs\license.md' -Destination (Join-Path $plugin 'FidelityFX-SDK-LICENSE.md') -Force
     Copy-Item -LiteralPath 'third_party\FidelityFX-FSR\LICENSE.txt' -Destination (Join-Path $plugin 'FidelityFX-FSR-LICENSE.txt') -Force
+    Copy-Item -LiteralPath 'third_party\FidelityFX-SDK-DX11\LICENSE.txt' -Destination (Join-Path $plugin 'FidelityFX-SDK-DX11-LICENSE.txt') -Force
     Copy-Item -LiteralPath 'LICENSE' -Destination (Join-Path $plugin 'LICENSE.txt') -Force
     Copy-Item -LiteralPath 'THIRD_PARTY_NOTICES.md' -Destination $plugin -Force
     Get-ChildItem -LiteralPath $packageRoot -Filter '*.md' -File | Remove-Item -Force  # Docs from earlier builds.
@@ -148,7 +154,7 @@ try {
     $version = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $plugin 'RiskOfRainUpscaling.dll')).Version.ToString(3)
     $manifest = [ordered]@{version=$version;builtUtc=[DateTime]::UtcNow.ToString('O');
         target='Unity 2021.3 Mono Windows x64';bepInEx=[Reflection.AssemblyName]::GetAssemblyName((Join-Path $referenceRoot 'BepInEx.dll')).FullName;
-        streamLineSdk='2.14.1';sdkCommit=$sdkCommit.Trim();fidelityFxSdk='2.3.0';fidelityFxCommit=$ffxCommit.Trim();frameGenerationBackends='[Frame Generation] Backend: Auto (DLSS on supported NVIDIA GPUs, otherwise FSR), DLSS, FSR (2x); restart to change';upscalerBackends='[Upscaling] Upscaler: Auto (DLSS on supported NVIDIA GPUs, otherwise FSR 3.1/4 through a same-adapter D3D12 queue), DLSS, FSR; live';dlssRendering=$true;reconstructionDefault='DLAA';renderScale=1.0;dlssQualityModes='DLAA (default), Quality, Balanced, Performance, UltraPerformance; F7 cycles; lower modes compose the world into the HUD camera target';frameGeneration=$true;frameGenerationMultiplier=2;frameGenerationMultipliers=@(2,3,4,5,6);frameGenerationFallback='highest supported GPU/driver multiplier';
+        streamLineSdk='2.14.1';sdkCommit=$sdkCommit.Trim();fidelityFxSdk='2.3.0';fidelityFxCommit=$ffxCommit.Trim();fidelityFxDx11='FSR 3.1.2 (optiscaler/FidelityFX-SDK-DX11)';fidelityFxDx11Commit=$ffxDx11Commit.Trim();frameGenerationBackends='[Frame Generation] Backend: Auto (DLSS on supported NVIDIA GPUs, otherwise FSR), DLSS, FSR (2x); restart to change';upscalerBackends='[Upscaling] Upscaler: Auto (DLSS on supported NVIDIA GPUs; otherwise FSR3/4 DX12 when FSR 4 is offered, else FSR 3 DX11), DLSS, FSR (FSR3/4 DX12: FSR 3.1/4 through a same-adapter D3D12 queue), FSR3DX11 (FSR 3 DX11: FSR 3.1.2 on the D3D11 device); live';dlssRendering=$true;reconstructionDefault='DLAA';renderScale=1.0;dlssQualityModes='DLAA (default), Quality, Balanced, Performance, UltraPerformance; F7 cycles; lower modes compose the world into the HUD camera target';frameGeneration=$true;frameGenerationMultiplier=2;frameGenerationMultipliers=@(2,3,4,5,6);frameGenerationFallback='highest supported GPU/driver multiplier';
         presentationBridge=$true;presentationDefault='D3D11 when Frame Generation Off at startup; D3D12 bridge when On at startup; live Off retains bridge';presentationConfiguration='BepInEx/config/xanderfrangos.riskofrainupscaling.cfg [Frame Generation]: Enabled and Multiplier apply live in D3D12; restart to enable from D3D11';
         reflexFrameLimiterDefault=$true;reflexCapGuard=$true;mainMenuDefault=$true;rcasDefault=0.7;dlaaPlacement='BeforePostProcessing (HDR; DLAA in place, DLSS upscaled before display-sized post-processing); End of Effects only for a camera without post-processing or, for the session, after an unsupported scene image effect';fovCutMinimumDegrees=5;fovCutRateDegreesPerSecond=180;
         riskOfOptions='optional: com.rune580.riskofoptions';liveOptions='Upscaler, Upscaler Quality, Outlines, RCAS Sharpening, Framerate Limit, Frame Generation Off/on and 2x–6x in D3D12, Logging Level, Enable Hotkeys and five key bindings';restartOptions='Enable DLSS Frame Generation from D3D11';loggingLevel='Off/Error/Warning/Info/Debug; live managed/native filtering and saved startup preference';hotkeys='Enable Hotkeys and five live rebindable shortcuts; default F6-F8, F10, F11; key combinations and None supported';

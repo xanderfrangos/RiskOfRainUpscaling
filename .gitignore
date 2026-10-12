@@ -13,6 +13,7 @@ build/forward-test/
 **/obj/
 third_party/Streamline/
 third_party/FidelityFX-SDK/
+third_party/FidelityFX-SDK-DX11/
 build/*.log
 build/Build.local.psd1
 build/profile-installation-*.json

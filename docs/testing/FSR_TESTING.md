@@ -4,21 +4,29 @@ AMD FSR now provides both halves of the pipeline, so the mod runs on non-NVIDIA 
 
 | Mod Options (`BepInEx/config/xanderfrangos.riskofrainupscaling.cfg`) | Values | Applies |
 |---|---|---|
-| Upscaler (`[Upscaling] Upscaler`) | **Auto** (DLSS on supported NVIDIA GPUs, otherwise FSR), DLSS, FSR | Live, with a history reset |
+| Upscaler (`[Upscaling] Upscaler`) | **Auto** (DLSS on supported NVIDIA GPUs; otherwise FSR3/4 DX12 when FSR 4 is offered, else FSR 3 DX11), DLSS, FSR 3 DX11 (`FSR3DX11`), FSR3/4 DX12 (`FSR`) | Live, with a history reset |
 | Frame Generation Backend (`[Frame Generation] Backend`) | **Auto** (DLSS Frame Generation on supported NVIDIA GPUs, otherwise FSR), DLSS, FSR | Restart |
 
 Both default to Auto. Auto falls back to FSR only when DLSS never started in this session (for example a GTX GPU or missing runtime). A DLSS failure after it ran still latches reconstruction off until restart, as before. Explicit DLSS on another vendor reports reconstruction or Frame Generation unavailable instead of loading NVIDIA runtimes.
 
-The F6 overlay shows `SR DLSS`/`SR FSR` and `FG FSR 2x enabled`/`FG DLSS 4x enabled`. Mod Options → Risk of Rain Upscaling lists both under Graphics; the related controls are Upscaler Quality and Frame Generation.
+The F6 overlay shows `SR DLSS`/`SR FSR 3 DX11`/`SR FSR3/4 DX12` and `FG FSR 2x enabled`/`FG DLSS 4x enabled`. Mod Options → Risk of Rain Upscaling lists both under Graphics; the related controls are Upscaler Quality and Frame Generation.
 
 ## FSR upscaling
 
 The quality levels are unchanged: DLAA maps to FSR Native AA, and Mod Options labels it Native AA when the Upscaler resolves to FSR (the config value stays `DLAA`); Quality, Balanced, Performance and Ultra Performance map to FSR's modes and render at FSR's ratios, which match DLSS except Balanced (1/1.7, 59%, rather than 58%). With Auto, render sizing follows the runtime native code last selected, otherwise the GPU vendor; if Auto on an NVIDIA GPU falls back to FSR, Balanced rebuilds once at FSR's size. `UPSCALER_SIZES` shows FSR's recommended size.
 
-Unity renders with D3D11 and the FidelityFX API is D3D12-only. Each evaluation copies the converted color/depth/motion into shared textures, signals a shared fence, and a private D3D12 queue on the same adapter waits on the GPU, runs FSR and signals back; D3D11 waits on the GPU and copies the result. There is no CPU stall. `FSR_CONTEXT` logs the provider in use and the available versions.
+Unity renders with D3D11, and the mod offers FSR two ways:
 
-- **Version:** the SDK selects FSR 4 where the GPU and driver support it, otherwise FSR 3.1.5. On the RTX 5080 the choices are 3.1.5 and 2.3.4.
-- **HDR placement** (before post-processing): HDR with FSR auto-exposure. **End of effects**: LDR; the sRGB-encoded "perceptual" input is declared to FSR as non-linear.
+- **FSR 3 DX11** runs FSR 3.1.2 from [OptiScaler's FidelityFX-SDK-DX11 port](https://github.com/optiscaler/FidelityFX-SDK-DX11) on Unity's own device. The upscaler, its D3D11 backend and its Shader Model 5.0 permutations (compiled with fxc, no wave operations) are built into the native DLL. Its passes dispatch on the immediate context inside the upscaler's private state bracket, reading the converted color/depth/motion directly, with no copies, D3D12 device or fences. It needs feature level 11_1 (one pass writes compute UAV `u8`); the game's device is 11_1, under DXVK too. `FSR_DX11_READY` and `FSR_DX11_CONTEXT` log it. AMD has no official D3D11 FSR 2/3.
+  - FSR 3.1's legacy API leaves the dilated depth, dilated motion vectors and reconstructed previous depth to the application (`ffxFsr3UpscalerGetSharedResourceDescriptions`). The feature allocates them with each context and passes them on every dispatch. The first game test left them null: FSR then saw no motion and the world smeared whenever the camera or anything else moved.
+  - LDR (end of effects) passes an explicit exposure of 1, as the DX12 runtime uses. The port's internal default exposure left the LDR output black once the shared resources were bound.
+  - [third_party/patches/FidelityFX-SDK-DX11](../../third_party/patches/FidelityFX-SDK-DX11) holds fixes on top of the pinned commit, applied by `Fetch-SDK.ps1` and `Build.ps1`. `0001` binds constant buffers at the register the shader declares: the 16-bit luma and shading-change pyramid passes keep only `cbSPD` at `b1`, which the backend bound at `b0`, so those passes ran without their constants.
+- **FSR3/4 DX12** uses AMD's signed FidelityFX API DLLs, which are D3D12-only. Each evaluation copies the converted color/depth/motion into shared textures, signals a shared fence, and a private D3D12 queue on the same adapter waits on the GPU, runs FSR and signals back; D3D11 waits on the GPU and copies the result. There is no CPU stall, but the work is serialized across two devices (under Proton, DXVK and vkd3d-proton). `FSR_CONTEXT` logs the provider in use and the available versions.
+
+Auto on a GPU without DLSS creates the FSR3/4 DX12 feature once to read the SDK's default upscaler version: if it is FSR 4 it keeps it, otherwise every later Auto context uses FSR 3 DX11 (`UPSCALER_AUTO FSR 4 not offered ...`). If the D3D12 path cannot start, or the device is below feature level 11_1, Auto uses the other path and logs `UPSCALER_AUTO` with the reason.
+
+- **Version:** FSR 3 DX11 is FSR 3.1.2. For FSR3/4 DX12 the SDK selects FSR 4 where the GPU and driver support it, otherwise FSR 3.1.5. On the RTX 5080 the choices are 3.1.5 and 2.3.4, so Auto uses FSR 3 DX11 there.
+- **HDR placement** (before post-processing): HDR with FSR auto-exposure. **End of effects**: LDR; FSR3/4 DX12 declares the sRGB-encoded "perceptual" input as non-linear. FSR 3.1.2 has no such flag and treats it as plain LDR input.
 - **Sharpening:** FSR's sharpening stays off; the existing RCAS pass still applies.
 - **Outlines:** FSR has no alpha upscaling, so `TEMPORAL_OUTLINES unavailable` is expected. At lower qualities outlines are drawn at full resolution after reconstruction (`FULL_RESOLUTION_OUTLINES`, with SMAA), whichever Outlines mode is selected; at Native AA they are drawn after reconstruction with SMAA.
 - **Frame Generation inputs:** FSR evaluations feed Frame Generation exactly like DLSS ones, so AMD systems now generate frames.
@@ -33,9 +41,9 @@ Reflex and PCL are NVIDIA-only: with FSR Frame Generation the game's FPS cap use
 
 ## Game test: NVIDIA PC
 
-1. Build and install. In Mod Options set Upscaler = FSR and Frame Generation Backend = FSR, then restart. Keep Frame Generation enabled, windowed/borderless, VSync off.
-2. Launch. `native.log` should show `UPSCALER_SELECTED selected=FSR`, `FSR_CONTEXT`, `FRAME_GEN_BACKEND selected=FSR` and in gameplay `FRAME_GEN_ENABLED ... multiplier=2x`. F6 should read `SR FSR`, `FG FSR 2x enabled` and a `Frame-start guard` limiter while the game FPS cap is set.
-3. Cycle quality with F7 and compare DLSS vs FSR (switch `Upscaler` live) for shimmer, ghosting on particles/transparents (FSR has no reactive mask yet), outline appearance, and HDR bloom/brightness.
+1. Build and install. In Mod Options set Upscaler = FSR 3 DX11 and Frame Generation Backend = FSR, then restart. Keep Frame Generation enabled, windowed/borderless, VSync off.
+2. Launch. `native.log` should show `UPSCALER_SELECTED selected=FSR 3 DX11`, `FSR_DX11_CONTEXT`, `FRAME_GEN_BACKEND selected=FSR` and in gameplay `FRAME_GEN_ENABLED ... multiplier=2x`. F6 should read `SR FSR 3 DX11`, `FG FSR 2x enabled` and a `Frame-start guard` limiter while the game FPS cap is set.
+3. Cycle quality with F7 and compare DLSS, FSR 3 DX11 and FSR3/4 DX12 (switch `Upscaler` live) for shimmer, ghosting on particles/transparents (FSR has no reactive mask yet), outline appearance, and HDR bloom/brightness. FSR 3 DX11 (3.1.2) and FSR3/4 DX12 (3.1.5 on this GPU) should look nearly the same. With Cost Profiling on, compare the `upscale.feature` rows of the two FSR paths at each quality.
 4. With FSR Frame Generation, compare F11 Off/On during camera motion and HUD-heavy moments, with the F6 panel hidden (measured opacity) and shown (difference mask). The HUD should stay sharp and fixed while the camera turns; check translucent panels and the crosshair.
 5. Set the game FPS cap to 30, then 60, then unlimited. **Watch for FSR Frame Generation staying slower than the 60 cap after a period at 30.** The synthetic fixture showed FSR's swap-chain pacing holding about 39 base FPS under a 60 cap after a 30 FPS stretch; the fixture stalls on a GPU readback every frame, so the game may not reproduce it.
 6. Resize, alt-tab, change stages and return to the menu. Then set both settings back to Auto and confirm DLSS returns unchanged.
@@ -45,19 +53,22 @@ Reflex and PCL are NVIDIA-only: with FSR Frame Generation the game's FPS cap use
 This is also the Proton feasibility check.
 
 1. Launch options: `WINEDLLOVERRIDES="winhttp=n,b" %command%`. Leave both settings on Auto and Frame Generation enabled.
-2. Confirm in `native.log`: early device/swap-chain observation; `UPSCALER_SELECTED selected=FSR`; `FSR_READY` and `FSR_CONTEXT provider=...` (report the provider: FSR 4 on RDNA 3 depends on the SteamOS/Proton version); `FRAME_GEN_BACKEND selected=FSR`; `FRAME_GEN_ENABLED`; no `FSR_FAILED`, `FRAME_BRIDGE_FAILED` or `FRAME_GEN_FAILED`.
+2. Confirm in `native.log`: early device/swap-chain observation; `UPSCALER_AUTO` (report it: whether the SDK offered FSR 4 on RDNA 3 depends on the SteamOS/Proton version) and `UPSCALER_SELECTED selected=FSR 3 DX11` with `FSR_DX11_READY ... featureLevel=0xb100`, or `selected=FSR3/4 DX12` with `FSR_READY` and `FSR_CONTEXT provider=...`; `FRAME_GEN_BACKEND selected=FSR`; `FRAME_GEN_ENABLED`; no `FSR_DX11_FAILED`, `FSR_FAILED`, `FRAME_BRIDGE_FAILED` or `FRAME_GEN_FAILED`.
 3. Wine may not validate Authenticode signatures; `FFX_SIGNATURE_UNVERIFIED` is then expected, only under Wine. A failure opening shared textures or fences (`FSR shared texture on D3D12`, `FSR shared fence on D3D11`, `FRAME_BRIDGE_FAILED Shared ...`) would mean DXVK/vkd3d-proton interop needs a different approach; send the logs.
-4. Play a stage at a 1440p/4K output with Quality and Performance, windowed and fullscreen (gamescope), FG on and off. Report image quality, stutter, black or frozen frames, and the F6 FPS readouts.
+4. Turn on Cost Profiling. With Frame Generation off, compare upscaling Off, Native AA, Quality and Performance on each FSR path (switch Upscaler between FSR 3 DX11 and FSR3/4 DX12). Report the F6 FPS readouts and the `upscale.feature` rows from `profile.log`: this measures the D3D11/D3D12 round trip under Proton.
+5. Play a stage at a 1440p/4K output with Quality and Performance, windowed and fullscreen (gamescope), FG on and off. Report image quality, stutter, black or frozen frames, and the F6 FPS readouts.
 
 Send `native.log`, `managed.log` and `BepInEx/LogOutput.log` for any issue.
 
 ## Evidence and limits
 
-`build/Test.ps1 -FrameGeneration` runs the existing suite; it does not run the FSR modes below. Additional fixture modes on the RTX 5080:
+`build/Test.ps1` runs `PipelineTests --hardware --fsr3-dx11-upscaler`; it does not run the other FSR modes below. The fixture device is feature level 11_1, as Unity creates the game's. Additional fixture modes on the RTX 5080:
 
-- `RiskOfRainUpscaling.PipelineTests --hardware --fsr-upscaler` (and `--bridge`): every upscaler pipeline fixture through FSR: 128 end-of-effects evaluations through both Present APIs, lower-resolution Quality 171x96→256x144 with preserved brightness, HDR evaluation before post-processing with peak 8.0 preserved, alpha preservation, retirement and re-enable, and the documented temporal-outline fallback.
-- `--fg --visible --fsr` (with `--fg-multiplier 4`, `--fg-live`, `--reflex-limit`): FSR Frame Generation at 2x (254 presents per 128 frames), clamping, live requests and the cap guard. `--fg --visible --fsr --fsr-upscaler` runs the complete AMD path. Both read back the UI layer (`FG_UI_LAYER_VERIFIED ... difference mask`); `--fg --visible --fsr --ui-recomposition` draws the HUD through the opacity capture (`... measured opacity`).
+- `RiskOfRainUpscaling.PipelineTests --hardware --fsr-upscaler` (FSR3/4 DX12) or `--fsr3-dx11-upscaler` (FSR 3 DX11), each also with `--bridge`: every upscaler pipeline fixture through that FSR path: 128 end-of-effects evaluations through both Present APIs, lower-resolution Quality 171x96→256x144 with preserved brightness, HDR evaluation before post-processing with peak 8.0 preserved, alpha preservation, retirement and re-enable, and the documented temporal-outline fallback. `--hardware --no-hooks` checks Auto: on the RTX 5080 it logs `UPSCALER_AUTO FSR 4 not offered` and selects FSR 3 DX11.
+- `--fg --visible --fsr` (with `--fg-multiplier 4`, `--fg-live`, `--reflex-limit`): FSR Frame Generation at 2x (254 presents per 128 frames), clamping, live requests and the cap guard. `--fg --visible --fsr --fsr-upscaler` and `--fg --visible --fsr --fsr3-dx11-upscaler` (also with `--display-scale`) run the complete AMD path. Both read back the UI layer (`FG_UI_LAYER_VERIFIED ... difference mask`); `--fg --visible --fsr --ui-recomposition` draws the HUD through the opacity capture (`... measured opacity`).
+- Motion (every `--hardware` run, both placements): the camera pans 2 render pixels a frame across a smooth textured background while a bright square moves 3 the other way, 32 frames at Quality 171x96→256x144. The output is compared with the current frame on the square, the trail it vacated and the background (`MOTION ... error`). Both FSR paths measure trail .057/.058, square .001/.004, background .039/.063 (before post-processing HDR / end-of-effects LDR); DLSS .011/.017, .001/.005, .010/.018. FSR 3 DX11 without the shared dilated resources measured .097/.103, .045/.062, .098/.103 and fails.
+- Cost (`--fg --visible --fsr <path> --profile`, 853x480→1280x720, RTX 5080): `upscale.feature FSR 3 DX11` 0.18 ms GPU / 0.11 ms CPU, against `upscale.feature FSR3/4 DX12` 0.86 ms GPU / 0.60 ms CPU (D3D11 side, including the wait for the D3D12 queue). A synthetic scene on native Windows, not the game.
 
 During M3 the DLSS Reflex limiter fixture (`--fg --visible --reflex-limit`) failed intermittently for about ten minutes, with the driver enforcing the cap at the presented rate (base FPS halved). The committed pre-FSR build and the current build each passed every run before and after that window, including immediately after FSR runs, so this is attributed to transient driver/system state, not the FSR changes. Watch for it.
 
-Not yet verified: game image quality with FSR, behavior under Proton and gamescope, FSR 4 selection on AMD hardware, and the cost of the D3D11/D3D12 round trip in game. Not implemented: an FSR reactive/transparency mask (M5).
+Not yet verified: game image quality with FSR (either path), behavior under Proton and gamescope, FSR 4 selection on AMD hardware, and the cost of the D3D11/D3D12 round trip in game. Not implemented: an FSR reactive/transparency mask (M5).

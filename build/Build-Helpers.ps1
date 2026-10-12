@@ -106,3 +106,20 @@ function Get-BuildRelativePath {
     if (-not $fullPath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw "Path escapes build output: $Path" }
     return $fullPath.Substring($prefix.Length)
 }
+
+# Applies third_party\patches\<name>\*.patch, in name order, to a pinned checkout; skips patches already applied.
+function Install-BuildPatches {
+    param([string]$GitPath, [string]$ProjectRoot, [string]$Name)
+    $checkout = Join-Path $ProjectRoot "third_party\$Name"
+    foreach ($patch in Get-ChildItem -LiteralPath (Join-Path $ProjectRoot "third_party\patches\$Name") -Filter '*.patch' -File | Sort-Object Name) {
+        # git reports a patch that does not reverse-apply on stderr; that is the "not applied yet" answer.
+        $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        & $GitPath -C $checkout apply --reverse --check $patch.FullName 2>$null | Out-Null
+        $applied = $LASTEXITCODE -eq 0
+        $ErrorActionPreference = $previous
+        if ($applied) { continue }
+        & $GitPath -C $checkout apply $patch.FullName
+        if ($LASTEXITCODE -ne 0) { throw "$Name patch failed: $($patch.Name)" }
+        Write-Output "Applied $Name patch $($patch.Name)"
+    }
+}

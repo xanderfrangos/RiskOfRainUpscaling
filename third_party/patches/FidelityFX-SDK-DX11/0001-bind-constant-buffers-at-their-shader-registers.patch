@@ -1,0 +1,16 @@
+diff --git a/sdk/src/backends/dx11/ffx_dx11.cpp b/sdk/src/backends/dx11/ffx_dx11.cpp
+index 1a2a89f..940f02b 100644
+--- a/sdk/src/backends/dx11/ffx_dx11.cpp
++++ b/sdk/src/backends/dx11/ffx_dx11.cpp
+@@ -1859,7 +1859,10 @@ static FfxErrorCode executeGpuJobCompute(BackendContext_DX11* backendContext, Ff
+                        job->computeJobDescriptor.cbs[currentRootConstantIndex].num32BitEntries * sizeof(uint32_t));
+                 backendContext->deviceContext->Unmap(backendContext->constantBufferResource[currentRootConstantIndex], 0);
+ 
+-                dx11DeviceContext->CSSetConstantBuffers(currentRootConstantIndex, 1, &backendContext->constantBufferResource[currentRootConstantIndex]);
++                // Bind at the register the shader declares. When the compiler strips an unused buffer
++                // (the 16-bit pyramid passes keep only cbSPD, at b1), list position and register differ.
++                const uint32_t constantBufferSlot = job->computeJobDescriptor.pipeline.constantBufferBindings[currentRootConstantIndex].slotIndex;
++                dx11DeviceContext->CSSetConstantBuffers(constantBufferSlot, 1, &backendContext->constantBufferResource[currentRootConstantIndex]);
+             }
+         }
+     }

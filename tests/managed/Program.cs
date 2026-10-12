@@ -38,12 +38,15 @@ void ExpectSize(DlssQuality quality,int width,int height)
 }
 ExpectSize(DlssQuality.DLAA,2560,1440);ExpectSize(DlssQuality.Quality,1707,960);ExpectSize(DlssQuality.Balanced,1485,835);
 ExpectSize(DlssQuality.Performance,1280,720);ExpectSize(DlssQuality.UltraPerformance,853,480);
-// FSR's ratios match DLSS except Balanced (1/1.7).
-foreach(DlssQuality q in Enum.GetValues(typeof(DlssQuality)))
+// FSR's ratios match DLSS except Balanced (1/1.7); both FSR paths size alike.
+foreach(DlssQuality q in Enum.GetValues(typeof(DlssQuality))) {
     if(q!=DlssQuality.Balanced && DlssPolicy.Dimension(2560,q,UpscalerBackend.FSR)!=DlssPolicy.Dimension(2560,q))throw new Exception("FSR render size for "+q);
+    if(DlssPolicy.Dimension(2560,q,UpscalerBackend.FSR3DX11)!=DlssPolicy.Dimension(2560,q,UpscalerBackend.FSR))throw new Exception("FSR 3 DX11 render size for "+q);
+}
 if(DlssPolicy.Dimension(2560,DlssQuality.Balanced,UpscalerBackend.FSR)!=1506 || DlssPolicy.Dimension(1440,DlssQuality.Balanced,UpscalerBackend.FSR)!=847)
     throw new Exception("FSR Balanced render size incorrect");
-if(DlssPolicy.Resolve(UpscalerBackend.Auto,0,true)!=UpscalerBackend.DLSS || DlssPolicy.Resolve(UpscalerBackend.Auto,0,false)!=UpscalerBackend.FSR ||
+if(DlssPolicy.Resolve(UpscalerBackend.Auto,0,true)!=UpscalerBackend.DLSS || DlssPolicy.Resolve(UpscalerBackend.Auto,0,false)!=UpscalerBackend.FSR3DX11 ||
+   DlssPolicy.Resolve(UpscalerBackend.Auto,3,true)!=UpscalerBackend.FSR3DX11 || DlssPolicy.Resolve(UpscalerBackend.FSR3DX11,2,false)!=UpscalerBackend.FSR3DX11 ||
    DlssPolicy.Resolve(UpscalerBackend.Auto,2,true)!=UpscalerBackend.FSR || DlssPolicy.Resolve(UpscalerBackend.Auto,1,false)!=UpscalerBackend.DLSS ||
    DlssPolicy.Resolve(UpscalerBackend.FSR,1,true)!=UpscalerBackend.FSR || DlssPolicy.Resolve(UpscalerBackend.DLSS,2,false)!=UpscalerBackend.DLSS)
     throw new Exception("Upscaler resolution for render sizing incorrect");
