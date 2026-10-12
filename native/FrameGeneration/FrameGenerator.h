@@ -15,6 +15,10 @@ struct FrameGenerationRequest {
     UINT interval, renderWidth, renderHeight;
     int multiplier;            // Requested total frames per rendered frame (2–6)
     DisplayRect content;       // The game image in the swap chain; depth/motion map onto it. Full chain unless Unity scales.
+    bool dynamic = false;      // Dynamic Multi Frame Generation requested (DLSS only)
+    float dynamicTargetFps = 0;// Output target for Dynamic; 0 follows the display refresh rate
+    bool dynamicActive = false;   // Set when the backend applied Dynamic this frame
+    bool dynamicRejected = false; // Set when the backend rejected Dynamic; the facade stops requesting it
 };
 // The runtime's report after the display Present.
 struct FrameGenerationPresented {

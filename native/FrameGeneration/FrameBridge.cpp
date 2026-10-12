@@ -62,9 +62,12 @@ void ConfigureFrameBridge(){
     // Auto: DLSS Frame Generation on supported NVIDIA adapters, otherwise FSR.
     wchar_t backendName[16]{};GetPrivateProfileStringW(L"Frame Generation",L"Backend",L"Auto",backendName,16,config.c_str());
     auto backend=!_wcsicmp(backendName,L"DLSS")?FrameGenerationBackend::DLSS:!_wcsicmp(backendName,L"FSR")?FrameGenerationBackend::FSR:FrameGenerationBackend::Auto;
+    // Dynamic Multi Frame Generation (DLSS only); Multiplier stays the fixed-mode choice.
+    wchar_t dynamicName[16]{};GetPrivateProfileStringW(L"Frame Generation",L"Dynamic",L"false",dynamicName,16,config.c_str());
+    const bool dynamic=!_wcsicmp(dynamicName,L"true");
     requested=enabled?1:0;
-    ConfigureFrameGeneration(enabled,multiplier,backend);
-    Log("FRAME_BRIDGE_STARTUP mode=%ls config=%ls FrameGeneration=%ls preference=%ls multiplier=%dx backend=%ls; presentation runtime fixed for this session; Off/on and multipliers can change live in D3D12; restart to enable from D3D11 or change backend",enabled?L"Bridge":L"Native",config.c_str(),enabled?L"On":L"Off",preference,multiplier,backend==FrameGenerationBackend::DLSS?L"DLSS":backend==FrameGenerationBackend::FSR?L"FSR":L"Auto");
+    ConfigureFrameGeneration(enabled,multiplier,backend,dynamic);
+    Log("FRAME_BRIDGE_STARTUP mode=%ls config=%ls FrameGeneration=%ls preference=%ls multiplier=%dx dynamic=%d backend=%ls; presentation runtime fixed for this session; Off/on and multipliers can change live in D3D12; restart to enable from D3D11 or change backend",enabled?L"Bridge":L"Native",config.c_str(),enabled?L"On":L"Off",preference,multiplier,dynamic,backend==FrameGenerationBackend::DLSS?L"DLSS":backend==FrameGenerationBackend::FSR?L"FSR":L"Auto");
 }
 // 32-bit top-down BMP from BGRA rows; diagnostics only.
 static bool WriteBmp(const std::filesystem::path& path,UINT width,UINT height,const std::vector<unsigned char>& bgra){
@@ -855,7 +858,7 @@ class FrameBridge final : public IDXGISwapChain2 {
                 ++frames;
                 LARGE_INTEGER ended{};QueryPerformanceCounter(&ended);
                 cpuMilliseconds+=1000.0*static_cast<double>(ended.QuadPart-started.QuadPart)/clockFrequency.QuadPart;
-                if(frames<=4 || frames%300==0)Log("FRAME_BRIDGE_PRESENT count=%llu slot=%u serial=%llu HRESULT=0x%08lx meanCpuMs=%.3f render=%ux%u interpolation=%s multiplier=%d",frames,index,value,result,cpuMilliseconds/static_cast<double>(frames),gpu->desc.Width,gpu->desc.Height,generating?"requested":"OFF",RiskOfRainUpscaling_FrameGenerationMultiplier());
+                if(frames<=4 || frames%300==0)Log("FRAME_BRIDGE_PRESENT count=%llu slot=%u serial=%llu HRESULT=0x%08lx meanCpuMs=%.3f render=%ux%u interpolation=%s multiplier=%d dynamic=%d",frames,index,value,result,cpuMilliseconds/static_cast<double>(frames),gpu->desc.Width,gpu->desc.Height,generating?"requested":"OFF",RiskOfRainUpscaling_FrameGenerationMultiplier(),RiskOfRainUpscaling_FrameGenerationDynamic());
             }
             return result;
         }catch(const std::exception& e){failed=true;++runtimeFailures;Log(ModLogLevel::Error, "FRAME_BRIDGE_PRESENT_FAILED %s; set [Frame Generation] Enabled=false and restart",e.what());return DXGI_ERROR_DEVICE_REMOVED;}

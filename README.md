@@ -7,13 +7,13 @@ Introduces upscaling and frame generation to Risk of Rain 2, using **NVIDIA DLSS
 ## What it does
 
 - **Upscaling:** the game renders at a lower resolution and the mod rebuilds a clean full-resolution image. The game is already light, so depending on your system and FPS, you may lose frames instead of gaining any. Consider this an anti-aliasing option more than performance saving at high framerates. 
-- **Frame Generation:** adds generated frames between the real ones for smoother motion: up to 6x on NVIDIA, 2x with FSR.
+- **Frame Generation:** adds generated frames between the real ones for smoother motion: up to 6x on NVIDIA, 2x with FSR. On RTX 50 series cards, **Dynamic** lets DLSS pick how many frames to generate to reach your Framerate Limit or your monitor's refresh rate.
 
 ## Will it work on my PC?
 
 | Graphics card | Upscaling | Frame Generation |
 | --- | --- | --- |
-| NVIDIA RTX 50 series | DLSS | DLSS, 2x–6x |
+| NVIDIA RTX 50 series | DLSS | DLSS, 2x–6x or Dynamic |
 | NVIDIA RTX 40 series | DLSS | DLSS, 2x |
 | NVIDIA RTX 20 and 30 series | DLSS | FSR, 2x |
 | AMD, Intel and others | FSR | FSR, 2x |
@@ -62,7 +62,7 @@ Change settings in-game under **Settings → Mod Options → Risk of Rain Upscal
 | --- | --- |
 | `[General]` | `Enabled`: master switch for everything the mod does. |
 | `[Upscaling]` | `Enabled`, `Quality` (default DLAA), `Upscaler` (Auto, DLSS, FSR3DX11 = FSR 3 DX11, FSR = FSR3/4 DX12), `DLSS Preset`, `Outlines`, `Sharpening`, `MipBiasOffset`, `MainMenu`. |
-| `[Frame Generation]` | `Enabled` (default off), `Multiplier`, `Backend` (Auto, DLSS, FSR), `ReflexFrameLimiter`. Turning Frame Generation on when it was off at startup needs a restart; changing `Backend` always does. |
+| `[Frame Generation]` | `Enabled` (default off), `Multiplier`, `Dynamic` (DLSS only; aims the output at the Framerate Limit, or the refresh rate when unlimited), `Backend` (Auto, DLSS, FSR), `ReflexFrameLimiter`. Turning Frame Generation on when it was off at startup needs a restart; changing `Backend` always does. |
 | `[Diagnostics]` | `Logging Level` (default Off), `ShowOverlay`, `CaptureWhileOff`, `TraceGraphicsStartup` (leave on; DLSS and Frame Generation need it). |
 | `[Hotkeys]` | `Enable Hotkeys` (default off) and five rebindable shortcuts. |
 

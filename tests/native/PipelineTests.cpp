@@ -15,6 +15,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <limits>
+#include <string>
 #include <vector>
 #include <algorithm>
 #include <chrono>
@@ -804,10 +805,27 @@ int main(int argc,char** argv) {
         if(++i>=argc)return 123;requestedMultiplier=std::atoi(argv[i]);
         if(requestedMultiplier<2 || requestedMultiplier>6)return 123;
     }
-    if(fg){hardware=bridge=true;width=1280;height=720;ConfigureFrameGeneration(true,requestedMultiplier,fsr?FrameGenerationBackend::FSR:FrameGenerationBackend::Auto);}
+    // --fg-dynamic: Dynamic Multi Frame Generation, or the highest fixed mode where the GPU/driver lacks it.
+    bool fgDynamic=false;for(int i=1;i<argc;++i)fgDynamic|=!std::strcmp(argv[i],"--fg-dynamic");
+    // --fg-dynamic-pacing: a game slower than the Dynamic target, measured without and then with a Reflex cap at the target.
+    bool fgDynamicPacing=false;for(int i=1;i<argc;++i)fgDynamicPacing|=!std::strcmp(argv[i],"--fg-dynamic-pacing");
+    fgDynamic|=fgDynamicPacing;
+    DEVMODEW displayMode{};displayMode.dmSize=sizeof(displayMode);
+    const int refreshHz=EnumDisplaySettingsW(nullptr,ENUM_CURRENT_SETTINGS,&displayMode) && displayMode.dmDisplayFrequency>1?static_cast<int>(displayMode.dmDisplayFrequency):60;
+    int pacingTarget=refreshHz*3/4;double pacingBaseSeconds=2.5/pacingTarget; // Default needs between 2x and 3x.
+    for(int i=1;i+1<argc;++i){
+        if(!std::strcmp(argv[i],"--pacing-target"))pacingTarget=std::atoi(argv[i+1]);
+        if(!std::strcmp(argv[i],"--pacing-base"))pacingBaseSeconds=1.0/std::atof(argv[i+1]);
+    }
+    if(fgDynamicPacing && (pacingTarget<1 || pacingTarget>1000 || !(pacingBaseSeconds>0)))return 161;
+    double pacingWindow[2][2]{};int pacingPresents[2][2]{};
+    if(fgDynamic){if(!fg || fsr || requestedMultiplier!=2)return 160;requestedMultiplier=6;}
+    auto requestedName=[&]{return fgDynamic?std::string("Dynamic"):std::to_string(requestedMultiplier)+"x";};
+    if(fg){hardware=bridge=true;width=1280;height=720;ConfigureFrameGeneration(true,requestedMultiplier,fsr?FrameGenerationBackend::FSR:FrameGenerationBackend::Auto,fgDynamic);}
     for(int i=1;i<argc;++i)reflexLimit|=!std::strcmp(argv[i],"--reflex-limit");
     for(int i=1;i<argc;++i)fgLive|=!std::strcmp(argv[i],"--fg-live");
-    if(fgLive && (!fg || reflexLimit || requestedMultiplier!=2))return 125;
+    if(fgLive && (!fg || reflexLimit || fgDynamic || requestedMultiplier!=2))return 125;
+    if(fgDynamic && (reflexLimit || RiskOfRainUpscaling_FrameGenerationSetDynamicTarget(0)!=0))return 160; // Target the display refresh rate.
     if(reflexLimit && !fg)return 90;
     if(bridge && !hardware)return 60;
     // --no-hooks: the game's chain exists but the early hooks never observed it.
@@ -930,8 +948,10 @@ int main(int argc,char** argv) {
         auto otherRaw=otherChain.Detach();if(otherRaw->Release()!=0)return 54;DestroyWindow(otherWindow);
         // More than 60 consecutive evaluations would trigger the SDK's missing-
         // present warning if common bookkeeping is still absent.
-        double pacedTimes[129]{};
-        for(int i=1;i<=128;++i) {
+        // Pacing measurements need seconds per phase for Dynamic's controller to settle.
+        const int frameCount=fgDynamicPacing?1200:128;
+        std::vector<double> pacedTimes(frameCount+1);
+        for(int i=1;i<=frameCount;++i) {
             if(fgLive && (i-1)%16==0){
                 requestedMultiplier=liveMultipliers[(i-1)/16];
                 int state=RiskOfRainUpscaling_FrameGenerationState(),previous=RiskOfRainUpscaling_FrameGenerationMultiplier();
@@ -961,6 +981,17 @@ int main(int argc,char** argv) {
                 if(RiskOfRainUpscaling_ReflexSetFrameLimit(cap)!=cap || RiskOfRainUpscaling_ReflexFrameLimit()!=cap)return 91;
                 if(RiskOfRainUpscaling_ReflexSetFrameLimit(-1)!=-1 || RiskOfRainUpscaling_ReflexFrameLimit()!=cap)return 92;
                 if(RiskOfRainUpscaling_ReflexSetFrameLimit(1000001)!=-1 || RiskOfRainUpscaling_ReflexFrameLimit()!=cap)return 98;
+            }
+            if(fgDynamicPacing){
+                // Frames 1-600 run with no Reflex cap, 601-1200 with the cap at the target; the second half of each is measured.
+                const int cap=i>600?static_cast<int>(1000000/pacingTarget):0;
+                if(RiskOfRainUpscaling_FrameGenerationSetDynamicTarget(pacingTarget)!=pacingTarget || RiskOfRainUpscaling_ReflexSetFrameLimit(cap)!=cap)return 161;
+                // Emulate game work: rendered frames start no faster than the base interval.
+                if(i>1)while(std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count()-pacedTimes[i-1]<pacingBaseSeconds){}
+                for(int w=0;w<2;++w)for(int edge=0;edge<2;++edge)if(i==(w?900:300)+edge*300){
+                    pacingWindow[w][edge]=std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                    pacingPresents[w][edge]=RiskOfRainUpscaling_FrameGenerationPresentedFrames();
+                }
             }
             if(fg){RiskOfRainUpscaling_FrameGenerationMarker(0,i);RiskOfRainUpscaling_FrameGenerationMarker(1,i);RiskOfRainUpscaling_FrameGenerationMarker(2,i);}
             pacedTimes[i]=std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -1066,7 +1097,7 @@ int main(int argc,char** argv) {
                 if(i==32)presentsAt32=RiskOfRainUpscaling_FrameGenerationPresentedFrames();
                 if(i==64){
                     int multiplier=RiskOfRainUpscaling_FrameGenerationMultiplier(),actual=RiskOfRainUpscaling_FrameGenerationPresentedFrames()-presentsAt32;
-                    printf("FG_MULTIPLIER_MEASURED requested=%dx effective=%dx baseFrames=32 SDK presents=%d\n",requestedMultiplier,multiplier,actual);
+                    printf("FG_MULTIPLIER_MEASURED requested=%s effective=%s%dx baseFrames=32 SDK presents=%d\n",requestedName().c_str(),RiskOfRainUpscaling_FrameGenerationDynamic()?"Dynamic up to ":"",multiplier,actual);
                 }
             }
             if(fg && (i==4 || i==64)){
@@ -1127,6 +1158,18 @@ int main(int argc,char** argv) {
                 printf("REFLEX_LIMITER_MEASURED baseFPS cap30=%.2f cap60=%.2f FGoffCap30=%.2f clearedUs=%d guardWaits=%d appWaitable=%d\n",fps30,fps60,fpsOff30,RiskOfRainUpscaling_ReflexFrameLimit(),RiskOfRainUpscaling_ReflexGuardWaits(),appWaitable);
                 if(fps30<24 || fps30>36 || fps60<48 || fps60>72 || fpsOff30<24 || fpsOff30>36 || RiskOfRainUpscaling_ReflexFrameLimit()!=0)return 93;
             }
+            if(fgDynamicPacing){
+                // Output above the target means Dynamic alone does not hold fps_max as an output cap.
+                MONITORINFOEXW monitor{};monitor.cbSize=sizeof(monitor);DEVMODEW windowMode{};windowMode.dmSize=sizeof(windowMode);
+                const bool found=GetMonitorInfoW(MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST),&monitor) && EnumDisplaySettingsW(monitor.szDevice,ENUM_CURRENT_SETTINGS,&windowMode);
+                printf("FG_DYNAMIC_PACING primary=%dHz window=%ls %luHz target=%dFPS emulatedBase<=%.1fFPS dynamic=%d\n",refreshHz,found?monitor.szDevice:L"?",found?windowMode.dmDisplayFrequency:0ul,pacingTarget,1/pacingBaseSeconds,RiskOfRainUpscaling_FrameGenerationDynamic());
+                for(int w=0;w<2;++w){
+                    const double seconds=pacingWindow[w][1]-pacingWindow[w][0];
+                    printf("FG_DYNAMIC_PACING reflexCap=%s baseFPS=%.1f outputFPS=%.1f ratio=%.2f\n",w?"target":"none",300/seconds,(pacingPresents[w][1]-pacingPresents[w][0])/seconds,(pacingPresents[w][1]-pacingPresents[w][0])/300.0);
+                }
+                RiskOfRainUpscaling_ReflexSetFrameLimit(0);
+                return 0; // Measurement only; --fg-dynamic covers correctness.
+            }
             if(RiskOfRainUpscaling_FrameGenerationKind()!=(fsr?2:1)){printf("FG backend=%d expected=%d\n",RiskOfRainUpscaling_FrameGenerationKind(),fsr?2:1);return 147;}
             if(RiskOfRainUpscaling_FrameGenerationState()!=(reflexLimit?0:3) || RiskOfRainUpscaling_FrameGenerationPresentedFrames()<180){printf("FG verification failed state=%d SDK presents=%d\n",RiskOfRainUpscaling_FrameGenerationState(),RiskOfRainUpscaling_FrameGenerationPresentedFrames());return 66;}
             if(!reflexLimit){
@@ -1134,8 +1177,11 @@ int main(int argc,char** argv) {
                 // State counts asynchronous presentations since the last query.
                 // Allow transient focus/warmup skips, but require sustained extra
                 // presentations and a batch reaching the selected multiplier.
-                printf("FG_MULTIPLIER_VERIFIED requested=%dx effective=%dx baseFrames=128 SDK presents=%d maxBatch=%d\n",requestedMultiplier,multiplier,RiskOfRainUpscaling_FrameGenerationPresentedFrames(),maxSdkFrames);
-                if(multiplier<2 || multiplier>requestedMultiplier || maxSdkFrames<multiplier || RiskOfRainUpscaling_FrameGenerationPresentedFrames()<128*multiplier*7/10)return 124;
+                const bool dynamic=RiskOfRainUpscaling_FrameGenerationDynamic()==1;
+                printf("FG_MULTIPLIER_VERIFIED requested=%s effective=%s%dx baseFrames=128 SDK presents=%d maxBatch=%d\n",requestedName().c_str(),dynamic?"Dynamic up to ":"",multiplier,RiskOfRainUpscaling_FrameGenerationPresentedFrames(),maxSdkFrames);
+                if((dynamic && !fgDynamic) || multiplier<2 || multiplier>requestedMultiplier)return 124;
+                // Dynamic chooses its own ratio for the refresh-rate target, so only fixed modes must reach the selected batch.
+                if(!dynamic && (maxSdkFrames<multiplier || RiskOfRainUpscaling_FrameGenerationPresentedFrames()<128*multiplier*7/10))return 124;
             }
             if(displayScale){
                 printf("PASS: Frame Generation while Unity scales a %dx%d game into a %ux%u chain (rect %u,%u %ux%u).\n",width,height,displayWidth,displayHeight,content.left,content.top,content.width,content.height);
@@ -1188,7 +1234,7 @@ int main(int argc,char** argv) {
                 printf("PASS: Reflex plus native interval guard paces 30/60 rendered FPS, unlimited clears, FG Off keeps pacing, invalid cap rejected, failed runtime releases cap.\n");
             }
             raw=chain.Detach();if(raw->Release()!=0)return 79;DestroyWindow(window);
-            printf("PASS: simultaneous D3D11 DLAA / D3D12 DLSSG requested=%dx effective=%dx, actual SDK presents=%d, six exact depth/motion/pre-UI GPU readbacks with synthetic HUD exclusion, input-completion fences, Off/On, missing/mismatched input suspension, active resize and resident-SDK chain recreation. Unity timing/quality remain game tests.\n",requestedMultiplier,RiskOfRainUpscaling_FrameGenerationMultiplier(),RiskOfRainUpscaling_FrameGenerationPresentedFrames());
+            printf("PASS: simultaneous D3D11 DLAA / D3D12 DLSSG requested=%s effective=%s%dx, actual SDK presents=%d, six exact depth/motion/pre-UI GPU readbacks with synthetic HUD exclusion, input-completion fences, Off/On, missing/mismatched input suspension, active resize and resident-SDK chain recreation. Unity timing/quality remain game tests.\n",requestedName().c_str(),fgDynamic?"Dynamic up to ":"",RiskOfRainUpscaling_FrameGenerationMultiplier(),RiskOfRainUpscaling_FrameGenerationPresentedFrames());
             return 0;
         }
         auto pixels=Read(device.Get(),immediate.Get(),output.Get());if(pixels.size()!=pattern.size())return 20;

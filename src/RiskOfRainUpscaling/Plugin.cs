@@ -33,6 +33,7 @@ namespace RiskOfRainUpscaling
             settings.Generation.SetPresentationState(0);
             settings.Sharpness.SettingChanged += SharpnessChanged;
             settings.Generation.Multiplier.SettingChanged += FrameGenerationMultiplierChanged;
+            settings.Generation.Dynamic.SettingChanged += FrameGenerationMultiplierChanged;
             settings.Generation.Requested.SettingChanged += FrameGenerationEnabledChanged;
             settings.LoggingLevel.SettingChanged += LoggingChanged;
             logFolder = Path.Combine(Paths.BepInExRootPath, "RiskOfRainUpscaling-Diagnostics");
@@ -159,6 +160,7 @@ namespace RiskOfRainUpscaling
             {
                 settings.Sharpness.SettingChanged -= SharpnessChanged;
                 settings.Generation.Multiplier.SettingChanged -= FrameGenerationMultiplierChanged;
+                settings.Generation.Dynamic.SettingChanged -= FrameGenerationMultiplierChanged;
                 settings.Generation.Requested.SettingChanged -= FrameGenerationEnabledChanged;
                 settings.LoggingLevel.SettingChanged -= LoggingChanged;
             }
@@ -208,7 +210,12 @@ namespace RiskOfRainUpscaling
             {
                 frameGenerationMultiplierPending = false;
                 int multiplier = settings.Generation.LiveMultiplier;
-                if (multiplier != 0) NativeApi.FrameGenerationSetMultiplier(multiplier);
+                if (multiplier != 0)
+                {
+                    // Dynamic is its own request; the multiplier stays queued for fixed modes.
+                    NativeApi.FrameGenerationSetDynamic(settings.Generation.LiveDynamic ? 1 : 0);
+                    NativeApi.FrameGenerationSetMultiplier(multiplier);
+                }
                 else NativeApi.FrameGenerationSetEnabled(0);
             }
         }

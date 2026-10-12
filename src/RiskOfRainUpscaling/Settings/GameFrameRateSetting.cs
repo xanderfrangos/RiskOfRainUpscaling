@@ -7,7 +7,7 @@ namespace RiskOfRainUpscaling
     // while Reflex temporarily sets Unity's internal target to unlimited.
     internal sealed class GameFrameRateSetting
     {
-        internal const string Description = "Replace the game's limiter with NVIDIA Reflex while DLSS is enabled and VSync is off. With frame generation enabled, this is your base FPS.";
+        internal const string Description = "Replace the game's limiter with NVIDIA Reflex while DLSS is enabled and VSync is off. With 2x-6x frame generation, this is your base FPS. With Dynamic frame generation, this is the output FPS that DLSS aims for; unlimited (0 or -1) aims for the monitor's refresh rate. Keep this limiter on with Dynamic: NVIDIA designs Dynamic around the Reflex limiter.";
         private readonly Func<string> read;
         private readonly Action<string> write;
 

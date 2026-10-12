@@ -1,6 +1,6 @@
 # Frame Generation and pacing: behavior and testing
 
-Covers the D3D12 presentation bridge, DLSS Frame Generation (2x–6x), the Reflex limiter and the VSync guard. FSR Frame Generation is in [FSR testing](FSR_TESTING.md), HUD handling in [UI recomposition](UI_RECOMPOSITION_TESTING.md), startup hooks in [startup testing](STARTUP_TESTING.md).
+Covers the D3D12 presentation bridge, DLSS Frame Generation (2x–6x and Dynamic), the Reflex limiter and the VSync guard. FSR Frame Generation is in [FSR testing](FSR_TESTING.md), HUD handling in [UI recomposition](UI_RECOMPOSITION_TESTING.md), startup hooks in [startup testing](STARTUP_TESTING.md).
 
 ## Settings
 
@@ -10,6 +10,7 @@ Covers the D3D12 presentation bridge, DLSS Frame Generation (2x–6x), the Refle
 | --- | --- | --- |
 | `Enabled` | false | Read by the preloader before graphics startup: true starts the D3D12 bridge, false native D3D11. Off/on applies live while the bridge runs; enabling from D3D11 prompts for a restart. Live Off keeps the bridge for the session. **Toggle Frame Generation** (F11, when hotkeys are enabled). |
 | `Multiplier` | 2 | 2–6 total frames per rendered frame. Live in D3D12. Unsupported values use the GPU/driver maximum (`numFramesToGenerateMax`), reported in the overlay and `FRAME_GEN_MULTIPLIER`. |
+| `Dynamic` | false | **Dynamic (DLSS only)** in the Frame Generation choice. DLSS Multi Frame Generation (`DLSSGMode::eDynamic`) picks the generated frame count per frame to aim the output at `fps_max`, or the display refresh rate when unlimited (VSync on: near the refresh rate). Needs `bIsDynamicMFGSupported` (RTX 50 series, driver 595.41+); otherwise the highest supported fixed multiplier runs. FSR runs 2x. `Multiplier` is kept for fixed modes. Live in D3D12. |
 | `Backend` | Auto | Auto, DLSS, FSR. Restart. |
 | `ReflexFrameLimiter` | true | Replace the game's `fps_max` limiter with frame-start Reflex pacing plus a native interval guard while upscaling is on. |
 
@@ -27,13 +28,15 @@ Generation requires upscaling, windowed/borderless presentation, hardware-accele
 
 **Pacing.** Caps mean rendered (base) FPS: 30 is 30 game frames with generated frames added. The limiter keeps the game's FPS setting, calls Reflex sleep at frame start and then a native timer only if the interval has not elapsed, because a standalone driver test accepted Reflex caps without enforcing them. It never waits while holding the frame-token lock and does not burst to catch up. With VSync on, Unity ignores `targetFrameRate`, so a frame-start VSync guard enforces the cap (DLSS On or Off) while keeping the VSync setting. Turning upscaling off (F10, or quality Off) restores the game's limiter with the latest cap; F11 alone keeps Reflex pacing. Another mod writing a different Unity cap makes the limiter yield until the FPS setting changes again.
 
-The overlay's limiter label shows `Reflex + guard 60 base FPS`, `Reflex unlimited`, `Unity + VSync guard 40 base FPS`, `Unity limiter (disabled)` or, with FSR, `Frame-start guard 60 base FPS`.
+**Dynamic.** With Dynamic active, the same `fps_max` is also `dynamicTargetFrameRate`: the output frame rate DLSS aims for (unlimited sends 0, the refresh rate). The Reflex cap stays `1/fps_max`, which only bounds rendered frames at the target, so it cannot stop generation that the target needs. NVIDIA designs Dynamic around the Reflex limiter; with `ReflexFrameLimiter = false` Unity's limiter holds the same bound.
+
+The overlay's limiter label shows `Reflex + guard 60 base FPS`, `Reflex unlimited`, `Unity + VSync guard 40 base FPS`, `Unity limiter (disabled)` or, with FSR, `Frame-start guard 60 base FPS`. With Dynamic it shows `Reflex + guard 120 FPS Dynamic target` or `Reflex unlimited; Dynamic targets refresh rate`, and the FG label reads `DLSS Dynamic (up to 6x) enabled`.
 
 ## Automated coverage
 
 - `FrameBridgeTests --warp/--hardware`: 421 submissions with byte-exact readbacks, both Present APIs, tearing/waitable flags, D3D11 view guards, resize/recreation and retirement; `--fg-fallback` latches Frame Generation off on an unsupported adapter while presentation stays exact.
 - `PipelineTests --hardware --bridge`: upscaling with the bridge, Streamline presentation bookkeeping.
-- `build/Test.ps1 -FrameGeneration` (focused desktop): every multiplier 2–6 with actual SDK frame counts, live changes up/down and Off/on on one runtime, UI recomposition, application wait-handle mode. `-ReflexLimiter` adds hardware cap tests in both wait-handle modes.
+- `build/Test.ps1 -FrameGeneration` (focused desktop): every multiplier 2–6 with actual SDK frame counts, live changes up/down and Off/on on one runtime, Dynamic (`--fg-dynamic`: `eDynamic` accepted and generating at the refresh-rate target, or the highest fixed mode without support), UI recomposition, application wait-handle mode. `-ReflexLimiter` adds hardware cap tests in both wait-handle modes.
 - `FramePacingTests` measures 30/40/60 FPS pacing without graphics; managed tests cover the limiter's ownership, cap changes, unlimited, F10/F11 behavior, VSync, focus, pause, foreign-mod ownership, failures and disposal.
 
 ## Game test
@@ -49,6 +52,7 @@ Windowed or borderless, VSync off unless testing the guard.
 7. Test pause, alt-tab/minimize, resolution changes, a stage change, title/loading screens and relaunch. Generation suspends and resumes on fresh gameplay frames.
 8. Restart with `Enabled = false`: native D3D11, no bridge. Enabling from Mod Options prompts for a restart; reverting to Off cancels it.
 9. To compare against the game's original limiter, set `ReflexFrameLimiter = false` and relaunch.
+10. Dynamic (RTX 50 series, driver 595.41+), Logging Level Debug: choose **Dynamic (DLSS only)** live. native.log: `FRAME_GEN_CAPABILITIES ... dynamic=1`, `FRAME_GEN_MULTIPLIER requested=Dynamic selected=Dynamic`. Set the cap below the refresh rate (for example 120 on 240 Hz): the overlay shows `120 FPS Dynamic target`, and `REFLEX_PACING effectiveMultiplier` rises in heavy scenes and falls in light ones. Set unlimited: the output follows the refresh rate; with two monitors, moving the window changes the target. Repeat with VSync on (output near the refresh rate, no tearing) and with `ReflexFrameLimiter = false`. Switch 2x → Dynamic → 4x → Off → F11 (back to 4x) without a hitch or status error. On an RTX 40 series card or an older driver, Dynamic logs the fallback once and runs the highest supported multiplier.
 
 For issues, send `managed.log`, `native.log`, `FrameGeneration/sl.log` and `LogOutput.log`, with the cap and the transition that triggered it. `FRAME_GEN_FAILED`, `FRAME_GEN_STATUS_FAILED`, `FRAME_GEN_ASYNC_PRESENT_ERROR` and `FRAME_BRIDGE_PRESENT_FAILED` need review.
 

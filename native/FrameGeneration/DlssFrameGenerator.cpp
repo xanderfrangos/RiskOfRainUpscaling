@@ -33,6 +33,7 @@ class DlssFrameGenerator final : public FrameGenerator {
     bool haveCapabilities=false;
     uint32_t minDimension=0,maxGenerated=0;
     bool vsync=false;
+    bool dynamicSupported=false,dynamicRejected=false; // bIsDynamicMFGSupported; latched after the SDK refused eDynamic
     unsigned width=0,height=0;
     std::wstring logs; // The SDK keeps this path for the process lifetime.
     PFun_slInit* init{}; PFun_slSetD3DDevice* bind{};
@@ -188,7 +189,8 @@ public:
            !request.renderWidth || !request.renderHeight || request.renderWidth>desc.Width || request.renderHeight>desc.Height){
             offReason="resolution or VSync unsupported";return 0;
         }
-        const int multiplier=SupportedFrameGenerationMultiplier(request.multiplier,maxGenerated);
+        const auto choice=SelectFrameGenerationMode(request.dynamic && !dynamicRejected,dynamicSupported,request.multiplier,maxGenerated);
+        const int multiplier=choice.multiplier;
         sl::Constants c{};
         std::memcpy(&c.cameraViewToClip[0].x,packet.projection,sizeof(packet.projection));
         std::memcpy(&c.clipToCameraView[0].x,packet.inverseProjection,sizeof(packet.inverseProjection));
@@ -222,7 +224,9 @@ public:
             tagResult=tag(*current,viewport,tags,5,nullptr);
         }
         RequireF(tagResult,"FG frame resource tags");
-        sl::DLSSGOptions on{};on.mode=sl::DLSSGMode::eOn;on.numFramesToGenerate=multiplier-1;
+        // Dynamic ignores numFramesToGenerate; it stays the highest supported count so the options remain valid.
+        sl::DLSSGOptions on{};on.mode=choice.dynamic?sl::DLSSGMode::eDynamic:sl::DLSSGMode::eOn;on.numFramesToGenerate=multiplier-1;
+        on.dynamicTargetFrameRate=choice.dynamic?request.dynamicTargetFps:0.0f; // 0: the display refresh rate
         // Fixed-ratio DLSS: mvec/depth size is constant per quality mode, so the
         // dynamic-resolution flag stays clear (DLSS-G guide section 10).
         on.numBackBuffers=desc.BufferCount;on.colorWidth=desc.Width;on.colorHeight=desc.Height;
@@ -233,6 +237,11 @@ public:
         on.onErrorCallback=&FApiError;on.queueParallelismMode=sl::DLSSGQueueParallelismMode::eBlockPresentingClientQueue;
         enabled=true; // Attempt Off even if an On call partially fails.
         auto optionResult=options(viewport,on);
+        if(optionResult!=sl::Result::eOk && on.mode==sl::DLSSGMode::eDynamic){
+            Log(ModLogLevel::Warning, "FRAME_GEN_DYNAMIC_FALLBACK SDK Dynamic options rejected: %s (%d); retrying fixed %dx",sl::getResultAsStr(optionResult),static_cast<int>(optionResult),multiplier);
+            dynamicRejected=request.dynamicRejected=true;on.mode=sl::DLSSGMode::eOn;on.dynamicTargetFrameRate=0.0f;
+            optionResult=options(viewport,on);
+        }
         if(optionResult!=sl::Result::eOk && request.uiAlpha){
             Log(ModLogLevel::Warning, "FRAME_GEN_UI_FALLBACK SDK recomposition options rejected: %s (%d); retrying ordinary HUDless FG",sl::getResultAsStr(optionResult),static_cast<int>(optionResult));
             request.uiRejected=true;request.uiAlpha=nullptr;
@@ -242,15 +251,17 @@ public:
             on.enableUserInterfaceRecomposition=sl::Boolean::eFalse;
             optionResult=options(viewport,on);
         }
-        RequireF(optionResult,"DLSSG fixed-multiplier options");
+        RequireF(optionResult,on.mode==sl::DLSSGMode::eDynamic?"DLSSG dynamic options":"DLSSG fixed-multiplier options");
+        request.dynamicActive=on.mode==sl::DLSSGMode::eDynamic;
         if(!FrameGenerationLoaded()){offReason="asynchronous API failure";return 0;}
         return multiplier;
     }
     const char* AfterPresent(FrameGenerationPresented& presented) override {
         sl::DLSSGState state{};
         if(getState(viewport,state,nullptr)!=sl::Result::eOk)return "DLSSG post-Present state query failed";
-        if(!haveCapabilities)Log("FRAME_GEN_CAPABILITIES minDimension=%u maxGenerated=%u VSync=%d",state.minWidthOrHeight,state.numFramesToGenerateMax,state.bIsVsyncSupportAvailable==sl::Boolean::eTrue);
-        minDimension=state.minWidthOrHeight;maxGenerated=state.numFramesToGenerateMax;vsync=state.bIsVsyncSupportAvailable==sl::Boolean::eTrue;haveCapabilities=true;
+        if(!haveCapabilities)Log("FRAME_GEN_CAPABILITIES minDimension=%u maxGenerated=%u VSync=%d dynamic=%d",state.minWidthOrHeight,state.numFramesToGenerateMax,state.bIsVsyncSupportAvailable==sl::Boolean::eTrue,state.bIsDynamicMFGSupported==sl::Boolean::eTrue);
+        minDimension=state.minWidthOrHeight;maxGenerated=state.numFramesToGenerateMax;vsync=state.bIsVsyncSupportAvailable==sl::Boolean::eTrue;
+        dynamicSupported=state.bIsDynamicMFGSupported==sl::Boolean::eTrue;haveCapabilities=true;
         presented.frames=state.numFramesActuallyPresented;
         presented.inputsFence=static_cast<ID3D12Fence*>(state.inputsProcessingCompletionFence);
         presented.inputsValue=state.lastPresentInputsProcessingCompletionFenceValue;

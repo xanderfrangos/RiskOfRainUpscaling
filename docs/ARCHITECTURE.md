@@ -71,6 +71,7 @@ The bridge design follows `alandtse/open-shaders` (a Skyrim SKSE plugin, reviewe
 - `GetBuffer` returns a D3D11 texture with a shared handle; a shared fence orders D3D11 writes, D3D12 copies and presentation, and reuse.
 - Separate runtime directories give D3D11 (upscaling) and D3D12 (Frame Generation) independent Streamline instances, both with manual hooking.
 - Depth, motion, HUD-free color and UI alpha are tagged per frame; Reflex runs before rendering and PCL markers track the frame; the presenter checks SDK state and actual frames presented rather than an enabled flag.
+- DLSS Frame Generation runs a fixed multiplier (`eOn`) or, when `[Frame Generation] Dynamic` is set and `bIsDynamicMFGSupported` reports support, `eDynamic`, aiming the output at `fps_max` (the same value the Reflex limiter caps rendered frames at). The main thread only publishes the request and target; options are set on the presenting thread before Present.
 
 Its proxy only declares `IDXGISwapChain` and handles buffer zero; Unity needs more (below), so the interfaces were implemented from Unity's observed use rather than copied.
 
