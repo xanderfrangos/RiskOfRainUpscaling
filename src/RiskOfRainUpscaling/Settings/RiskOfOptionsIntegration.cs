@@ -18,7 +18,7 @@ namespace RiskOfRainUpscaling
         [MethodImpl(MethodImplOptions.NoInlining)]
         internal static void Register(ModSettings settings, GameFrameRateSetting frameRate, Func<bool> dlss, Action<string> warning)
         {
-            ModSettingsManager.SetModDescription("Adds upscaling and frame generation to Risk of Rain 2. This is offered in two flavors: DLSS or AMD FSR. Also supports frame generation (2x-6x or Dynamic on NVIDIA, 2x on FSR). Enabling frame generation requires a restart for the D3D12 bridge.", Plugin.Guid, "Risk of Rain Upscaling");
+            ModSettingsManager.SetModDescription("Adds NVIDIA DLSS or AMD FSR upscaling to Risk of Rain 2 for a cleaner image and higher FPS, plus frame generation for smoother motion. Turning frame generation on may need a game restart.", Plugin.Guid, "Risk of Rain Upscaling");
             try { ModSettingsManager.SetModIcon(LoadIcon(), Plugin.Guid, "Risk of Rain Upscaling"); }
             catch (Exception e) { warning("Risk of Options icon unavailable: " + e.Message); }
             var upscaler = new ChoiceOption(settings.Upscaler, new ChoiceConfig { name = "Upscaler", category = "Graphics" });

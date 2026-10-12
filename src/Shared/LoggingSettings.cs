@@ -14,7 +14,7 @@ namespace RiskOfRainUpscaling
         internal LoggingSettings(ConfigFile config)
         {
             Level = config.Bind(Section, "Logging Level", ModLogLevel.Off,
-                "Controls this mod's BepInEx output, managed.log and native.log. Off stops new messages; Error logs failures; Warning adds warnings; Info adds status; Debug adds detailed traces. Applies live and at startup. NVIDIA SDK log files are separate.");
+                "How much detail the mod writes to its log files. Leave it Off unless you're reporting a problem; Debug records the most.");
         }
 
         internal bool Allows(ModLogLevel severity) => Allows(Level.Value, severity);
