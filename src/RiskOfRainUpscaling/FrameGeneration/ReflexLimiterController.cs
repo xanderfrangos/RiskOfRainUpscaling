@@ -9,7 +9,7 @@ namespace RiskOfRainUpscaling
         private readonly Func<int> readTarget, readLimit;
         private readonly Action<int> writeTarget;
         private readonly Func<int, int> setLimit;
-        private readonly Func<bool> reflex;
+        private readonly Func<bool> reflex, dynamic;
         private readonly Action<string> log;
         private bool conflict, disposed;
         internal bool Owned { get; private set; }
@@ -17,11 +17,13 @@ namespace RiskOfRainUpscaling
         internal string SavedValue => Requested.ToString(CultureInfo.InvariantCulture);
         internal string Status { get; private set; } = "waiting for Reflex";
         internal static int Microseconds(int fps) => fps <= 0 ? 0 : Math.Max(1, (int)Math.Round(1000000.0 / fps));
+        // Dynamic Frame Generation's output target from fps_max: unlimited (0 or -1) follows the refresh rate.
+        internal static int DynamicTarget(int fps) => fps <= 0 ? 0 : Math.Min(fps, 1000);
 
         internal ReflexLimiterController(Func<int> readTarget, Action<int> writeTarget,
-            Func<int, int> setLimit, Func<int> readLimit, Action<string> log, Func<bool> reflex = null)
+            Func<int, int> setLimit, Func<int> readLimit, Action<string> log, Func<bool> reflex = null, Func<bool> dynamic = null)
         {
-            this.readTarget=readTarget;this.writeTarget=writeTarget;this.setLimit=setLimit;this.readLimit=readLimit;this.log=log;this.reflex=reflex;
+            this.readTarget=readTarget;this.writeTarget=writeTarget;this.setLimit=setLimit;this.readLimit=readLimit;this.log=log;this.reflex=reflex;this.dynamic=dynamic;
             Requested=readTarget();
         }
         internal void GameSetting(int value) { Requested=value;conflict=false; }
@@ -41,7 +43,10 @@ namespace RiskOfRainUpscaling
             if(!Owned){Owned=true;writeTarget(-1);log("REFLEX_LIMITER_ACQUIRED requested="+Requested+" frameLimitUs="+limit+" Unity.targetFrameRate=-1");}
             // FSR Frame Generation has no Reflex; the native frame-start guard alone holds the cap.
             bool driver=reflex?.Invoke()??true;
-            Status=Requested>0?(driver?"Reflex + guard ":"Frame-start guard ")+Requested+" base FPS":driver?"Reflex unlimited":"Unlimited (no Reflex)";
+            // Dynamic Frame Generation aims its output at the same fps_max; the base cap only bounds it.
+            bool targeting=dynamic?.Invoke()??false;
+            Status=Requested>0?(driver?"Reflex + guard ":"Frame-start guard ")+Requested+(targeting?" FPS Dynamic target":" base FPS"):
+                (driver?"Reflex unlimited":"Unlimited (no Reflex)")+(targeting?"; Dynamic targets refresh rate":"");
         }
         internal void CheckHealth()
         {

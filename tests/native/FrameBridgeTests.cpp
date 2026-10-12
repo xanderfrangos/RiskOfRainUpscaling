@@ -14,6 +14,16 @@ int main(int argc,char** argv){
            SupportedFrameGenerationMultiplier(multiplier,0)!=0)return 45;
     }
     if(SupportedFrameGenerationMultiplier(99,UINT32_MAX)!=6 || SupportedFrameGenerationMultiplier(-1,5)!=2)return 46;
+    // Dynamic runs at the system maximum when supported, else the highest fixed mode; fixed requests are unchanged.
+    for(uint32_t maxGenerated:{0u,1u,3u,5u}){
+        const int highest=SupportedFrameGenerationMultiplier(6,maxGenerated);
+        auto supported=SelectFrameGenerationMode(true,true,3,maxGenerated),unsupported=SelectFrameGenerationMode(true,false,3,maxGenerated);
+        auto fixed=SelectFrameGenerationMode(false,true,3,maxGenerated);
+        if(supported.dynamic!=(maxGenerated!=0) || supported.multiplier!=highest || unsupported.dynamic || unsupported.multiplier!=highest ||
+           fixed.dynamic || fixed.multiplier!=SupportedFrameGenerationMultiplier(3,maxGenerated))return 48;
+    }
+    if(RiskOfRainUpscaling_FrameGenerationSetDynamicTarget(-1)!=-1 || RiskOfRainUpscaling_FrameGenerationSetDynamicTarget(1001)!=-1 ||
+       RiskOfRainUpscaling_FrameGenerationSetDynamicTarget(144)!=144 || RiskOfRainUpscaling_FrameGenerationSetDynamicTarget(0)!=0)return 50;
     bool hardware=argc>1 && !std::strcmp(argv[1],"--hardware");
     bool fgFallback=argc>2 && !std::strcmp(argv[2],"--fg-fallback");
     if(fgFallback){if(hardware)return 43;ConfigureFrameGeneration(true);}
@@ -35,6 +45,7 @@ int main(int argc,char** argv){
     if(FAILED(CreateFrameBridge(factory.Get(),device.Get(),window,&desc,nullptr,nullptr,&chain)))return 5;
     if(fgFallback && RiskOfRainUpscaling_FrameGenerationState()!=-2)return 44;
     if(RiskOfRainUpscaling_FrameGenerationSetMultiplier(4)!=-1)return 47; // Off/failed runtimes cannot be enabled by a multiplier.
+    if(RiskOfRainUpscaling_FrameGenerationSetDynamic(1)!=-1 || RiskOfRainUpscaling_FrameGenerationDynamic()!=0)return 49; // ...or by Dynamic.
     ObserveChain(chain.Get()); // Exercise real hooks plus the replacement object.
     ComPtr<IDXGISwapChain2> chain2;if(FAILED(chain.As(&chain2)))return 6;
     ComPtr<IUnknown> base, versionIdentity;

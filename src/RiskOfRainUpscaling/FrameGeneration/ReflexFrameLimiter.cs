@@ -16,12 +16,14 @@ namespace RiskOfRainUpscaling
         private readonly ModLog log;
         private readonly Harmony harmony=new Harmony(HarmonyId);
         private bool patched, disposed;
+        private int dynamicTarget=-1; // Last fps_max target native accepted for Dynamic Frame Generation.
         internal string Status => patched?(vsyncLimiter.Status??controller.Status):"Unity limiter (hook unavailable)";
         internal ReflexFrameLimiter(Func<bool> enabled, ModLog log)
         {
             this.enabled=enabled;this.log=log;
             controller=new ReflexLimiterController(()=>Application.targetFrameRate,v=>Application.targetFrameRate=v,
-                v=>NativeApi.ReflexSetFrameLimit(v),()=>NativeApi.ReflexFrameLimit(),log.Info,()=>NativeApi.FrameGenerationKind()!=2);
+                v=>NativeApi.ReflexSetFrameLimit(v),()=>NativeApi.ReflexFrameLimit(),log.Info,()=>NativeApi.FrameGenerationKind()!=2,
+                ()=>NativeApi.FrameGenerationDynamic()==1);
             vsyncLimiter=new VSyncFrameLimiter(()=>Application.targetFrameRate,v=>NativeApi.FramePacerWait(v),log.Info);
             if(instance!=null){log.Warning("REFLEX_LIMITER_HOOK_FAILED another limiter instance already owns fps_max");return;}
             try {
@@ -52,10 +54,19 @@ namespace RiskOfRainUpscaling
             if(instance==null || !instance.controller.Owned)return true;
             __result=instance.controller.SavedValue;return false;
         }
-        internal void Begin(){if(patched && !disposed){
-            controller.Tick(enabled(),Application.isFocused,Time.timeScale>0,QualitySettings.vSyncCount);
-            vsyncLimiter.Tick(!controller.Owned,Application.isFocused,QualitySettings.vSyncCount);
-        }}
+        internal void Begin(){
+            if(disposed)return;
+            if(patched){
+                controller.Tick(enabled(),Application.isFocused,Time.timeScale>0,QualitySettings.vSyncCount);
+                vsyncLimiter.Tick(!controller.Owned,Application.isFocused,QualitySettings.vSyncCount);
+            }
+            // fps_max is also Dynamic Frame Generation's output target. While Reflex owns
+            // the limiter Unity's target reads unlimited, so use the saved request.
+            int target=ReflexLimiterController.DynamicTarget(patched && controller.Owned?controller.Requested:Application.targetFrameRate);
+            if(target!=dynamicTarget && NativeApi.FrameGenerationSetDynamicTarget(target)==target){
+                dynamicTarget=target;log.Info("DYNAMIC_FG_TARGET fps="+(target>0?target.ToString(CultureInfo.InvariantCulture):"refresh rate")+" (fps_max)");
+            }
+        }
         internal void AfterSleep(){if(patched && !disposed)controller.CheckHealth();}
         public void Dispose()
         {

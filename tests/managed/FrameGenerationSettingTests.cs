@@ -47,6 +47,18 @@ internal static class FrameGenerationSettingTests
             Check(!restarted.RestartRequired && restarted.LiveMultiplier == 0, "multiplier stays saved while Off");
             restarted.Requested.Value = true;
             Check(restarted.RuntimeAvailable && !restarted.RestartRequired && restarted.LiveEnabled && restarted.LiveMultiplier == 4, "D3D12 re-enables at saved multiplier live");
+            Check(!fresh.Dynamic.Value && !restarted.LiveDynamic, "Dynamic defaults Off");
+            restarted.Dynamic.Value = true;
+            Check(!restarted.RestartRequired && restarted.LiveDynamic && restarted.LiveMultiplier == 4, "Dynamic applies live and keeps the fixed multiplier");
+            restarted.Requested.Value = false;
+            Check(!restarted.LiveDynamic && restarted.Dynamic.Value, "Dynamic stays saved while Off");
+            restarted.Requested.Value = true; restarted.Requested.ConfigFile.Save();
+            var dynamicRestart = new FrameGenerationSetting(new ConfigFile(path, false));
+            dynamicRestart.SetPresentationState(2);
+            Check(dynamicRestart.LiveDynamic && dynamicRestart.MultiplierAtStartup == 4, "Dynamic survives restart");
+            dynamicRestart.SetPresentationState(-1);
+            Check(!dynamicRestart.LiveDynamic && dynamicRestart.RestartRequired, "native D3D11 fallback cannot run Dynamic");
+            restarted.Dynamic.Value = false;
             foreach (int multiplier in new[] { 2, 4, 6 })
             {
                 restarted.Multiplier.Value = multiplier;
@@ -74,7 +86,7 @@ internal static class FrameGenerationSettingTests
             File.WriteAllText(path, "[" + FrameGenerationSetting.Section + "]\nEnabled = true\nMultiplier = invalid\n");
             var invalid = new FrameGenerationSetting(new ConfigFile(path, false));
             Check(invalid.MultiplierAtStartup == 2, "invalid multiplier defaults to 2x");
-            Console.WriteLine("PASS: fresh Off default with saved 2x, live D3D12 Off/on and multipliers, D3D11 enable restart/revert, native fallback, saved Off startup, bounds and persistence.");
+            Console.WriteLine("PASS: fresh Off default with saved 2x, live D3D12 Off/on, multipliers and Dynamic, D3D11 enable restart/revert, native fallback, saved Off startup, bounds and persistence.");
         }
         finally { Directory.Delete(folder, true); }
     }

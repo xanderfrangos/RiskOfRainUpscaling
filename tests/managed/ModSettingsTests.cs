@@ -72,13 +72,22 @@ internal static class ModSettingsTests
             {
                 settings.GenerationMode = generation;
                 Check(settings.GenerationMode == generation, "select " + generation);
-                if (generation != FrameGenerationMode.Off)
-                    Check(settings.FrameGeneration.Value && settings.Generation.Multiplier.Value == (int)generation + 1, "native multiplier mapping");
+                if (generation == FrameGenerationMode.Dynamic)
+                    Check(settings.FrameGeneration.Value && settings.Generation.Dynamic.Value && settings.Generation.Multiplier.Value == 6, "Dynamic keeps the fixed multiplier");
+                else if (generation != FrameGenerationMode.Off)
+                    Check(settings.FrameGeneration.Value && !settings.Generation.Dynamic.Value && settings.Generation.Multiplier.Value == (int)generation + 1, "native multiplier mapping");
             }
             settings.FrameGeneration.Value = false;
-            Check(settings.GenerationMode == FrameGenerationMode.Off, "F11 reflects in menu");
+            Check(settings.GenerationMode == FrameGenerationMode.Off && settings.Generation.Dynamic.Value, "F11 reflects in menu and keeps Dynamic");
             settings.FrameGeneration.Value = true;
-            Check(settings.GenerationMode == FrameGenerationMode.SixX, "F11 restores last multiplier");
+            Check(settings.GenerationMode == FrameGenerationMode.Dynamic, "F11 restores Dynamic");
+            settings.GenerationMode = FrameGenerationMode.ThreeX;
+            Check(!settings.Generation.Dynamic.Value && settings.Generation.Multiplier.Value == 3, "fixed choice leaves Dynamic");
+            settings.GenerationMode = FrameGenerationMode.Off;
+            settings.FrameGeneration.Value = true;
+            Check(settings.GenerationMode == FrameGenerationMode.ThreeX, "F11 restores last multiplier");
+            settings.GenerationMode = FrameGenerationMode.SixX;
+            settings.GenerationMode = FrameGenerationMode.Dynamic;
             int sharpnessChanges = 0;
             settings.Sharpness.SettingChanged += (_, _) => ++sharpnessChanges;
             settings.Sharpness.Value = 0; settings.Sharpness.Value = 1;
@@ -99,7 +108,7 @@ internal static class ModSettingsTests
             Check(settings.LoggingLevel.Value == ModLogLevel.Debug && settings.ToggleReconstruction.Value.Equals(reloaded.ToggleReconstruction.Value), "reload shared preferences");
             Check(reloaded.Sharpness.Value == 0 && reloaded.LoggingLevel.Value == ModLogLevel.Debug && reloaded.ShowOverlay.Value &&
                 reloaded.Upscaler.Value == UpscalerBackend.FSR && reloaded.Generation.Backend.Value == FrameGenerationBackend.FSR &&
-                reloaded.QualityLevel == DlssQualityLevel.Off && reloaded.Quality.Value == DlssQuality.Quality && reloaded.GenerationMode == FrameGenerationMode.SixX,
+                reloaded.QualityLevel == DlssQualityLevel.Off && reloaded.Quality.Value == DlssQuality.Quality && reloaded.GenerationMode == FrameGenerationMode.Dynamic && reloaded.Generation.Multiplier.Value == 6,
                 "persist settings");
             Console.WriteLine("PASS: fresh defaults and sections, backend defaults, quality/FG choices, logging thresholds, hotkey defaults/combinations/disable, notifications, bounds and persistence.");
         }

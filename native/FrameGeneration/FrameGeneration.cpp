@@ -2,7 +2,9 @@
 #include "FrameGeneration/FrameBridge.h"
 #include <algorithm>
 #include <climits>
+#include <cstdio>
 #include <stdexcept>
+#include <string>
 
 // Backend-independent Frame Generation state. The backend owns its SDK; this
 // facade owns the user's request, failure latching and exported state.
@@ -16,15 +18,21 @@ struct FrameGenerationRuntime {
     std::atomic<int> requestedMultiplier{2};
     std::atomic<int> multiplier{2};
     int appliedRequestedMultiplier=0;
+    // Dynamic Multi Frame Generation: the request, its output target (0 = refresh rate) and what the backend applied.
+    std::atomic<bool> requestedDynamic{false}, dynamic{false}, dynamicRequestFailed{false};
+    std::atomic<int> dynamicTarget{0};
+    bool appliedRequestedDynamic=false;
+    int appliedDynamicTarget=-1;
     bool started=false, bound=false;
     bool uiRecomposition=false;
     std::atomic<bool> uiRequestFailed{false};
     ComPtr<ID3D12Device> device;
 };
 static auto f=new FrameGenerationRuntime(); // Process resident; no SDK calls during static destruction.
-void ConfigureFrameGeneration(bool enabled,int multiplier,FrameGenerationBackend backend){
+void ConfigureFrameGeneration(bool enabled,int multiplier,FrameGenerationBackend backend,bool dynamic){
     if(!f->started)f->preference=backend;
     f->requestedMultiplier=std::clamp(multiplier,2,6);f->multiplier=f->requestedMultiplier.load();
+    f->requestedDynamic=dynamic;
     f->requested=enabled;f->wanted=enabled;f->state=f->failed?-2:(enabled?1:0);
 }
 bool FrameGenerationLoaded(){return f->ready && !f->failed;}
@@ -41,6 +49,15 @@ extern "C" int __cdecl RiskOfRainUpscaling_FrameGenerationSetMultiplier(int mult
     // The main thread only publishes a request. SDK calls stay before Present.
     f->requestedMultiplier=multiplier;return multiplier;
 }
+extern "C" int __cdecl RiskOfRainUpscaling_FrameGenerationSetDynamic(int enabled){
+    if(enabled<0 || enabled>1 || !f->requested || f->failed)return -1;
+    f->requestedDynamic=enabled!=0;return enabled;
+}
+extern "C" int __cdecl RiskOfRainUpscaling_FrameGenerationSetDynamicTarget(int fps){
+    if(fps<0 || fps>1000)return -1;
+    f->dynamicTarget=fps;return fps;
+}
+extern "C" int __cdecl RiskOfRainUpscaling_FrameGenerationDynamic(){return f->state==3 && f->dynamic?1:0;}
 extern "C" void __cdecl RiskOfRainUpscaling_FrameGenerationSetEnabled(int enabled){f->wanted=enabled!=0 && f->requested && !f->failed;}
 extern "C" int __cdecl RiskOfRainUpscaling_ReflexFrameLimit(){return f->backend && !f->failed?f->backend->FrameLimit():-1;}
 extern "C" int __cdecl RiskOfRainUpscaling_ReflexGuardWaits(){return f->backend?f->backend->GuardWaits():0;}
@@ -136,23 +153,39 @@ bool FrameGenerationPrepare(const CameraFrame& packet,ID3D12Resource* depth,ID3D
     if(!FrameGenerationWanted())return false;
     if(!FrameGenerationUIAvailable())uiAlpha=nullptr;
     const int requestedMultiplier=f->requestedMultiplier.load();
+    const bool requestedDynamic=f->requestedDynamic.load();
+    const int dynamicTarget=f->dynamicTarget.load();
     FrameGenerationRequest request{packet,depth,motion,hudless,uiAlpha,false,desc,interval,renderWidth,renderHeight,requestedMultiplier,content};
+    request.dynamic=requestedDynamic && !f->dynamicRequestFailed.load();request.dynamicTargetFps=static_cast<float>(dynamicTarget);
     try {
         const char* offReason=nullptr;
         const int multiplier=f->backend->Prepare(request,offReason);
         if(request.uiRejected)f->uiRequestFailed=true;
+        if(request.dynamicRejected)f->dynamicRequestFailed=true;
         if(!multiplier){if(offReason)FrameGenerationOff(offReason);return false;}
-        if(f->state.load()!=3 || f->appliedRequestedMultiplier!=requestedMultiplier || f->multiplier.load()!=multiplier){
-            Log("FRAME_GEN_MULTIPLIER requested=%dx supportedMax=%ux selected=%dx%s",requestedMultiplier,std::min(f->backend->MaxGenerated(),5u)+1,multiplier,multiplier<requestedMultiplier?"; requested mode unsupported; using highest supported mode":"");
-            Log("FRAME_GEN_ENABLED unityFrame=%d generatedPerRender=%u multiplier=%dx requested=%dx viewport=0 size=%ux%u mvecDepth=%ux%u HUDless=exact pre-UI producer; UI %s",packet.frame,static_cast<unsigned>(multiplier-1),multiplier,requestedMultiplier,desc.Width,desc.Height,renderWidth,renderHeight,
+        const bool dynamicActive=request.dynamicActive;
+        if(f->state.load()!=3 || f->appliedRequestedMultiplier!=requestedMultiplier || f->multiplier.load()!=multiplier ||
+           f->appliedRequestedDynamic!=requestedDynamic || f->dynamic.load()!=dynamicActive || (dynamicActive && f->appliedDynamicTarget!=dynamicTarget)){
+            const unsigned supportedMax=std::min(f->backend->MaxGenerated(),5u)+1;
+            char target[32];
+            if(dynamicTarget>0)snprintf(target,sizeof(target),"%dFPS",dynamicTarget);else snprintf(target,sizeof(target),"refresh rate");
+            if(dynamicActive)Log("FRAME_GEN_MULTIPLIER requested=Dynamic supportedMax=%ux selected=Dynamic target=%s",supportedMax,target);
+            else if(requestedDynamic)Log("FRAME_GEN_MULTIPLIER requested=Dynamic supportedMax=%ux selected=%dx; Dynamic unavailable (%s); using highest supported mode",supportedMax,multiplier,
+                f->kind==static_cast<int>(FrameGenerationBackend::FSR)?"DLSS only":f->dynamicRequestFailed?"SDK rejected Dynamic options":"GPU/driver does not support Dynamic Multi Frame Generation");
+            else Log("FRAME_GEN_MULTIPLIER requested=%dx supportedMax=%ux selected=%dx%s",requestedMultiplier,supportedMax,multiplier,multiplier<requestedMultiplier?"; requested mode unsupported; using highest supported mode":"");
+            Log("FRAME_GEN_ENABLED unityFrame=%d mode=%s target=%s generatedPerRender=%s%u multiplier=%s%dx requested=%s viewport=0 size=%ux%u mvecDepth=%ux%u HUDless=exact pre-UI producer; UI %s",packet.frame,
+                dynamicActive?"Dynamic":"Fixed",dynamicActive?target:"none",dynamicActive?"up to ":"",static_cast<unsigned>(multiplier-1),dynamicActive?"up to ":"",multiplier,
+                requestedDynamic?"Dynamic":std::to_string(requestedMultiplier).append("x").c_str(),desc.Width,desc.Height,renderWidth,renderHeight,
                 f->backend->LayersUi()?"layer composited by the swap chain":request.uiAlpha?"recomposition=ON":"recomposition=OFF");
         }
+        f->dynamic=dynamicActive;f->appliedRequestedDynamic=requestedDynamic;f->appliedDynamicTarget=dynamicTarget;
         if(!f->backend->LayersUi() && f->uiRecomposition!=(request.uiAlpha!=nullptr))Log("FRAME_GEN_UI_RECOMPOSITION unityFrame=%d enabled=%d UIAlpha=%s",packet.frame,request.uiAlpha!=nullptr,request.uiAlpha?"R8 display-size current-frame HUD draws":"null; ordinary HUDless FG retained");
         f->uiRecomposition=request.uiAlpha!=nullptr;
         f->multiplier=multiplier;f->appliedRequestedMultiplier=requestedMultiplier;
         f->state=3;return true;
     }catch(const std::exception& e){
         if(request.uiRejected)f->uiRequestFailed=true;
+        if(request.dynamicRejected)f->dynamicRequestFailed=true;
         FrameGenerationFail(e.what());FrameGenerationOff("API failure");return false;
     }
 }

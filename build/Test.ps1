@@ -78,6 +78,11 @@ try {
         if($LASTEXITCODE -ne 0){throw "Live Frame Generation multiplier test failed, exit=$LASTEXITCODE"}
         Copy-Item -LiteralPath 'build\test-results\native.log' -Destination 'build\test-results\frame-generation-live.log' -Force
         Copy-Item -LiteralPath 'build\test-results\FrameGeneration\sl.log' -Destination 'build\test-results\frame-generation-live-sl.log' -Force
+        # Dynamic Multi Frame Generation; GPUs/drivers without it must fall back to the highest fixed mode.
+        & 'build\native-nmake\RiskOfRainUpscaling.PipelineTests.exe' --fg --visible --fg-dynamic
+        if($LASTEXITCODE -ne 0){throw "Dynamic Frame Generation test failed, exit=$LASTEXITCODE"}
+        Copy-Item -LiteralPath 'build\test-results\native.log' -Destination 'build\test-results\frame-generation-dynamic.log' -Force
+        Copy-Item -LiteralPath 'build\test-results\FrameGeneration\sl.log' -Destination 'build\test-results\frame-generation-dynamic-sl.log' -Force
         & 'build\native-nmake\RiskOfRainUpscaling.PipelineTests.exe' --fg --visible --app-waitable
         if($LASTEXITCODE -ne 0){throw "Frame Generation application wait-handle test failed, exit=$LASTEXITCODE"}
         Copy-Item -LiteralPath 'build\test-results\native.log' -Destination 'build\test-results\frame-generation-app-waitable.log' -Force

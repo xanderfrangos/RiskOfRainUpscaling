@@ -2,7 +2,7 @@
 #include "Upscaling/UpscalerContext.h"
 #include "FrameGeneration/FrameGenerator.h"
 
-__declspec(dllexport) void ConfigureFrameGeneration(bool, int multiplier=2, FrameGenerationBackend=FrameGenerationBackend::Auto);
+__declspec(dllexport) void ConfigureFrameGeneration(bool, int multiplier=2, FrameGenerationBackend=FrameGenerationBackend::Auto, bool dynamic=false);
 bool FrameGenerationStart(IDXGIAdapter*); // Before D3D12CreateDevice.
 bool FrameGenerationBind(ID3D12Device*);
 ID3D12Device* FrameGenerationDevice();
@@ -37,6 +37,12 @@ extern "C" __declspec(dllexport) int __cdecl RiskOfRainUpscaling_FrameGeneration
 extern "C" __declspec(dllexport) int __cdecl RiskOfRainUpscaling_FrameGenerationKind();
 // Queues a 2–6 multiplier for the presenting thread; never enables the runtime.
 extern "C" __declspec(dllexport) int __cdecl RiskOfRainUpscaling_FrameGenerationSetMultiplier(int);
+// Queues Dynamic Multi Frame Generation on (1) or off (0) for the presenting thread; never enables the runtime.
+extern "C" __declspec(dllexport) int __cdecl RiskOfRainUpscaling_FrameGenerationSetDynamic(int);
+// Dynamic's output target in FPS (0 follows the display refresh rate); -1 when out of range.
+extern "C" __declspec(dllexport) int __cdecl RiskOfRainUpscaling_FrameGenerationSetDynamicTarget(int);
+// 1 while Dynamic Multi Frame Generation is generating, otherwise 0.
+extern "C" __declspec(dllexport) int __cdecl RiskOfRainUpscaling_FrameGenerationDynamic();
 // Main frame-start caller; -1 means unavailable, otherwise the accepted cap in us.
 extern "C" __declspec(dllexport) int __cdecl RiskOfRainUpscaling_ReflexSetFrameLimit(int);
 extern "C" __declspec(dllexport) int __cdecl RiskOfRainUpscaling_ReflexFrameLimit();

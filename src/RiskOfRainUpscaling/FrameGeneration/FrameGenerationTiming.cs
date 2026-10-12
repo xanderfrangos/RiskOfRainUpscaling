@@ -53,9 +53,12 @@ namespace RiskOfRainUpscaling
             }
             worstMs=Math.Max(worstMs,(now-lastTime)*1000);lastTime=now;++intervals;
             if(now-windowStart<5)return;
+            int sdkPresents=NativeApi.FrameGenerationPresentedFrames()-firstSdkCount;
             log.Debug("REFLEX_PACING limiter="+status+" baseFPS="+(intervals/(now-windowStart)).ToString("F2",System.Globalization.CultureInfo.InvariantCulture)+
                 " worstFrameMs="+worstMs.ToString("F2",System.Globalization.CultureInfo.InvariantCulture)+" samples="+intervals+
-                " sdkPresents="+(NativeApi.FrameGenerationPresentedFrames()-firstSdkCount)+" guardWaitsTotal="+NativeApi.ReflexGuardWaits()+" FGstate="+NativeApi.FrameGenerationState()+"; frame-start timing, not physical display timing");
+                // Measured presents per rendered frame: the ratio Dynamic Frame Generation chose.
+                " sdkPresents="+sdkPresents+" effectiveMultiplier="+((double)sdkPresents/intervals).ToString("F2",System.Globalization.CultureInfo.InvariantCulture)+
+                " dynamic="+NativeApi.FrameGenerationDynamic()+" guardWaitsTotal="+NativeApi.ReflexGuardWaits()+" FGstate="+NativeApi.FrameGenerationState()+"; frame-start timing, not physical display timing");
             windowStart=now;intervals=0;worstMs=0;firstSdkCount=NativeApi.FrameGenerationPresentedFrames();
         }
         private void End(){if(!disposed)NativeApi.FrameGenerationMarker(1,Time.frameCount);}

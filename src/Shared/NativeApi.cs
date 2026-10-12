@@ -134,12 +134,13 @@ namespace RiskOfRainUpscaling
         internal static string UpscalerName(IntPtr context) => context == IntPtr.Zero || UpscalerKind == null ? "" : UpscalerKind(context) switch { 1 => "DLSS", 2 => "FSR", _ => "pending" };
         // Frame Generation and pacing.
         internal static IntAction FrameGenerationSetEnabled;
-        internal static IntSetter FrameGenerationSetMultiplier, ReflexSetFrameLimit, FramePacerWait;
-        internal static IntQuery FrameGenerationState, FrameGenerationPresentedFrames, FrameGenerationMultiplier, FrameGenerationKind, ReflexFrameLimit, ReflexGuardWaits;
+        internal static IntSetter FrameGenerationSetMultiplier, FrameGenerationSetDynamic, FrameGenerationSetDynamicTarget, ReflexSetFrameLimit, FramePacerWait;
+        internal static IntQuery FrameGenerationState, FrameGenerationPresentedFrames, FrameGenerationMultiplier, FrameGenerationDynamic, FrameGenerationKind, ReflexFrameLimit, ReflexGuardWaits;
         internal static EventGetter FrameGenerationGetBeforeHudEvent, FrameGenerationGetAfterHudEvent;
         internal static MarkerAction FrameGenerationMarker;
         internal static string FrameGenerationLabel => FrameGenerationState == null ? "unavailable" : FrameGenerationState() switch {
-            3 => BackendName + " " + FrameGenerationMultiplier() + "x enabled", 2 => "waiting for gameplay", 1 => "startup pending", -2 => "failed; see native.log", _ => "Off"
+            3 => BackendName + (FrameGenerationDynamic() == 1 ? " Dynamic (up to " + FrameGenerationMultiplier() + "x)" : " " + FrameGenerationMultiplier() + "x") + " enabled",
+            2 => "waiting for gameplay", 1 => "startup pending", -2 => "failed; see native.log", _ => "Off"
         };
         private static string BackendName => FrameGenerationKind?.Invoke() switch { 1 => "DLSS", 2 => "FSR", _ => "" };
         // Diagnostics (overlay previews and capture).
@@ -191,6 +192,9 @@ namespace RiskOfRainUpscaling
             Bind(out SetSharpness, nameof(SetSharpness));
             Bind(out FrameGenerationSetEnabled, nameof(FrameGenerationSetEnabled));
             Bind(out FrameGenerationSetMultiplier, nameof(FrameGenerationSetMultiplier));
+            Bind(out FrameGenerationSetDynamic, nameof(FrameGenerationSetDynamic));
+            Bind(out FrameGenerationSetDynamicTarget, nameof(FrameGenerationSetDynamicTarget));
+            Bind(out FrameGenerationDynamic, nameof(FrameGenerationDynamic));
             Bind(out FrameGenerationState, nameof(FrameGenerationState));
             Bind(out FrameGenerationPresentedFrames, nameof(FrameGenerationPresentedFrames));
             Bind(out FrameGenerationMultiplier, nameof(FrameGenerationMultiplier));

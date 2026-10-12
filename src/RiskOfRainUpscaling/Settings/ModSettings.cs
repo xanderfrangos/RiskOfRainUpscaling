@@ -5,7 +5,8 @@ using UnityEngine;
 namespace RiskOfRainUpscaling
 {
     internal enum DlssQualityLevel { Off, DLAA, Quality, Balanced, Performance, UltraPerformance }
-    internal enum FrameGenerationMode { Off, TwoX, ThreeX, FourX, FiveX, SixX }
+    // Fixed values map to multiplier (value + 1); Dynamic stays last so they keep their numbers.
+    internal enum FrameGenerationMode { Off, TwoX, ThreeX, FourX, FiveX, SixX, Dynamic }
     internal enum OutlineMode { FullResolution, Temporal }
 
     // The menu and hotkeys share the existing entries, including renderer fallbacks.
@@ -54,7 +55,7 @@ namespace RiskOfRainUpscaling
             CycleQuality = BindHotkey(config, "Cycle Upscaler Quality", KeyCode.F7, "Cycle DLAA/DLSS or FSR quality while upscaling is enabled.");
             CaptureEvidence = BindHotkey(config, "Capture Diagnostics", KeyCode.F8, "Save diagnostic screenshots and capture data.");
             ToggleReconstruction = BindHotkey(config, "Toggle Upscaling", KeyCode.F10, "Toggle upscaling Off/on using the last quality. Also retries after a renderer failure.");
-            ToggleFrameGeneration = BindHotkey(config, "Toggle Frame Generation", KeyCode.F11, "Toggle Frame Generation Off/on using the last multiplier. Applies live in D3D12; enabling from D3D11 requires a restart.");
+            ToggleFrameGeneration = BindHotkey(config, "Toggle Frame Generation", KeyCode.F11, "Toggle Frame Generation Off/on using the last mode (2x-6x or Dynamic). Applies live in D3D12; enabling from D3D11 requires a restart.");
         }
 
         private static ConfigEntry<KeyboardShortcut> BindHotkey(ConfigFile config, string name, KeyCode key, string description) =>
@@ -74,11 +75,13 @@ namespace RiskOfRainUpscaling
         }
         internal FrameGenerationMode GenerationMode
         {
-            get => FrameGeneration.Value ? (FrameGenerationMode)(Generation.Multiplier.Value - 1) : FrameGenerationMode.Off;
+            get => !FrameGeneration.Value ? FrameGenerationMode.Off : Generation.Dynamic.Value ? FrameGenerationMode.Dynamic : (FrameGenerationMode)(Generation.Multiplier.Value - 1);
             set
             {
                 if (!Enum.IsDefined(typeof(FrameGenerationMode), value)) throw new ArgumentOutOfRangeException(nameof(value));
-                if (value != FrameGenerationMode.Off) Generation.Multiplier.Value = (int)value + 1;
+                // Off keeps the saved mode so the toggle shortcut restores it.
+                if (value != FrameGenerationMode.Off) Generation.Dynamic.Value = value == FrameGenerationMode.Dynamic;
+                if (value != FrameGenerationMode.Off && value != FrameGenerationMode.Dynamic) Generation.Multiplier.Value = (int)value + 1;
                 FrameGeneration.Value = value != FrameGenerationMode.Off;
             }
         }

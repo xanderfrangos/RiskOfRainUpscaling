@@ -49,6 +49,15 @@ internal static class ReflexLimiterTests
         f.GameSetting(-1);f.Tick(true,true,true,0);Check(f.Status=="Unlimited (no Reflex)","FSR unlimited status");
         reflex=true;f.Tick(true,true,true,0);Check(f.Status=="Reflex unlimited","Reflex unlimited status");
         f.Dispose();
-        Console.WriteLine("PASS: Reflex/FSR guard status, cap conversion, native-first acquisition, saved/live settings, unlimited, VSync/focus/pause, foreign-mod ownership, options/sleep failure, disable and disposal.");
+        // Dynamic Frame Generation: fps_max is the output target and still the Reflex cap.
+        Check(ReflexLimiterController.DynamicTarget(-1)==0 && ReflexLimiterController.DynamicTarget(0)==0 &&
+            ReflexLimiterController.DynamicTarget(144)==144 && ReflexLimiterController.DynamicTarget(int.MaxValue)==1000,"Dynamic target mapping");
+        bool dynamic=true;target=120;native=0;
+        var d=new ReflexLimiterController(()=>target,v=>target=v,v=>native=v,()=>native,_=>{},null,()=>dynamic);
+        d.Tick(true,true,true,0);Check(d.Owned && native==8333 && d.Status=="Reflex + guard 120 FPS Dynamic target","Dynamic target status keeps the cap");
+        d.GameSetting(-1);d.Tick(true,true,true,0);Check(native==0 && d.Status=="Reflex unlimited; Dynamic targets refresh rate","Dynamic unlimited status");
+        dynamic=false;d.GameSetting(60);d.Tick(true,true,true,0);Check(native==16667 && d.Status=="Reflex + guard 60 base FPS","fixed mode returns to base FPS");
+        d.Dispose();
+        Console.WriteLine("PASS: Reflex/FSR guard status, Dynamic target mapping/status, cap conversion, native-first acquisition, saved/live settings, unlimited, VSync/focus/pause, foreign-mod ownership, options/sleep failure, disable and disposal.");
     }
 }
