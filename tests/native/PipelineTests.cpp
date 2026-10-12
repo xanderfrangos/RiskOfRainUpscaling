@@ -255,6 +255,31 @@ static CameraFrame Frame(int index) {
 }
 // FG constants must describe the top-down swap chain, not Unity's flipped RT space.
 // Unity scales a smaller game resolution into the window aspect-fit and centred.
+// An explicit FSR 3 DX11 choice on a feature level 11_0 device is unavailable at creation
+// (no backend, fallback image), as explicit DLSS is on another vendor's adapter.
+static int Fsr3Dx11FeatureLevelCheck() {
+    const D3D_FEATURE_LEVEL level=D3D_FEATURE_LEVEL_11_0;
+    ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> immediate;
+    if(FAILED(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_HARDWARE,nullptr,0,&level,1,D3D11_SDK_VERSION,&device,nullptr,&immediate)))return 174;
+    const int outW=width,outH=height,inW=(outW*2+1)/3,inH=(outH*2+1)/3;
+    const UINT both=D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_RENDER_TARGET;
+    auto color=Texture(device.Get(),DXGI_FORMAT_R16G16B16A16_TYPELESS,both,nullptr,0,inW,inH),output=Texture(device.Get(),DXGI_FORMAT_R16G16B16A16_TYPELESS,both,nullptr,0,outW,outH);
+    auto depth=Texture(device.Get(),DXGI_FORMAT_R32G32B32A32_TYPELESS,both,nullptr,0,inW,inH),motion=Texture(device.Get(),DXGI_FORMAT_R32G32B32A32_TYPELESS,both,nullptr,0,inW,inH);
+    if(!color||!output||!depth||!motion)return 174;
+    SceneInputsDescription b{sizeof(b),4,inW,inH,depth.Get()};
+    auto bc=RiskOfRainUpscaling_SceneInputsCreate(&b);if(!bc)return 174;
+    UpscalerDescription d{sizeof(d),2,inW,inH,bc,color.Get(),depth.Get(),motion.Get(),output.Get(),outW,outH,1,1};
+    if(RiskOfRainUpscaling_SetUpscalerBackend(3))return 175;
+    auto c=RiskOfRainUpscaling_UpscalerCreate(&d);
+    RiskOfRainUpscaling_SetUpscalerBackend(fsrUpscaler?fsrKind:0);
+    if(!c)return 175;
+    reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_UpscalerGetEvaluateEvent())(-2,c);
+    const int state=RiskOfRainUpscaling_UpscalerState(c),kind=RiskOfRainUpscaling_UpscalerKind(c);
+    RiskOfRainUpscaling_UpscalerDestroy(c);
+    reinterpret_cast<void(__stdcall*)(int,void*)>(RiskOfRainUpscaling_SceneInputsGetEvent())(199,bc);RiskOfRainUpscaling_SceneInputsDestroy(bc);
+    if(state!=-2 || kind!=0){printf("FSR 3 DX11 at feature level 11_0: state=%d kind=%d\n",state,kind);return 176;}
+    return 0;
+}
 // Auto keeps FSR3/4 DX12 only when the SDK's default version name is FSR 4 or later.
 static bool FfxVersionCheck() {
     return FfxMajorVersion("3.1.5")==3 && FfxMajorVersion("2.3.4")==2 && FfxMajorVersion("4.0.2")==4
@@ -851,6 +876,7 @@ int main(int argc,char** argv) {
     const D3D_FEATURE_LEVEL levels[]{D3D_FEATURE_LEVEL_11_1,D3D_FEATURE_LEVEL_11_0};
     if(FAILED(D3D11CreateDevice(nullptr,hardware?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP,nullptr,0,levels,2,D3D11_SDK_VERSION,&device,nullptr,&immediate)))return 1;
     if(!LetterboxCheck(device.Get(),immediate.Get()))return 156;
+    if(hardware)if(int failed=Fsr3Dx11FeatureLevelCheck())return failed;
     ComPtr<ID3D11Texture2D> hudRenderTextureOwner,hudHdrOwner;
     if(displayScale && (!fg || uiRecomposition || hudHdrTarget || reflexLimit || fgLive || appWaitable))return 157;
     const UINT displayWidth=displayScale?width*9/8:width,displayHeight=displayScale?height*5/4:height;

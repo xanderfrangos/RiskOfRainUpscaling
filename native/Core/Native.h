@@ -16,6 +16,8 @@ bool LogEnabled(ModLogLevel severity);
 bool VerifyNvidiaSignature(const wchar_t* path);
 // NVIDIA SDKs are loaded only on adapters with this PCI vendor ID.
 constexpr UINT NvidiaVendorId = 0x10DE;
+// FSR 4 runs only on AMD adapters.
+constexpr UINT AmdVendorId = 0x1002;
 extern std::wstring g_logFolder, g_runtimeFolder;
 
 extern "C" __declspec(dllexport) int __cdecl RiskOfRainUpscaling_Initialize(const wchar_t*, const wchar_t*, const wchar_t*);

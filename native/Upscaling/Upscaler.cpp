@@ -54,21 +54,38 @@ std::unique_ptr<UpscalerFeature> CreateUpscalerFeature(ID3D11Device* device, Ups
         }
     }
     if(backend==UpscalerBackend::FSR) return CreateFsrFeature(device);
-    if(backend==UpscalerBackend::FSR3DX11) return CreateFsrDx11Feature(device);
+    // FSR 3 DX11 binds compute UAV u8, which needs feature level 11_1 (Unity's device has it).
+    const auto level=static_cast<unsigned>(device->GetFeatureLevel());
+    const bool fsr3Dx11=level>=D3D_FEATURE_LEVEL_11_1;
+    if(backend==UpscalerBackend::FSR3DX11) {
+        if(!fsr3Dx11) {
+            sprintf_s(reason,"FSR 3 DX11 needs Direct3D feature level 11_1 (device 0x%x); select Auto or FSR3/4 DX12",level);
+            unavailable=reason; return nullptr;
+        }
+        return CreateFsrDx11Feature(device);
+    }
     // Auto without DLSS: FSR 4 needs D3D12, so the D3D12 path runs only when the SDK
-    // offers FSR 4 for this adapter. FSR 3 runs on D3D11, without the D3D12 round trip,
-    // on feature level 11_1 devices (Unity's).
-    if(device->GetFeatureLevel()<D3D_FEATURE_LEVEL_11_1) {
-        Log("UPSCALER_AUTO feature level 0x%x is below FSR 3 DX11's 11_1; Auto selects FSR3/4 DX12",static_cast<unsigned>(device->GetFeatureLevel()));
+    // offers FSR 4 for this adapter. FSR 3 runs on D3D11, without the D3D12 round trip.
+    if(!fsr3Dx11) {
+        Log("UPSCALER_AUTO feature level 0x%x is below FSR 3 DX11's 11_1; Auto selects FSR3/4 DX12",level);
         return CreateFsrFeature(device);
     }
-    static std::atomic<int> fsr4{-1}; // -1 not probed yet, 0 not offered, 1 offered
-    if(fsr4.load()!=0) {
+    // FSR 4 is AMD-only: other vendors never start the D3D12 path to ask.
+    if(desc.VendorId!=AmdVendorId) {
+        Log("UPSCALER_AUTO FSR 4 needs an AMD adapter (vendor 0x%04x); Auto selects FSR 3 DX11",desc.VendorId);
+        return CreateFsrDx11Feature(device);
+    }
+    // The SDK's answer belongs to the adapter: a device on another adapter asks again.
+    // Serialized by streamlineMutex, like every call here.
+    static LUID probedAdapter{};
+    static int fsr4=-1; // for probedAdapter: -1 not asked yet, 0 not offered, 1 offered
+    if(probedAdapter.LowPart!=desc.AdapterLuid.LowPart || probedAdapter.HighPart!=desc.AdapterLuid.HighPart) { probedAdapter=desc.AdapterLuid; fsr4=-1; }
+    if(fsr4!=0) {
         try {
             if(auto feature=CreateFsr4Feature(device)) { fsr4=1; return feature; }
             Log("UPSCALER_AUTO FSR 4 not offered for this adapter; Auto selects FSR 3 DX11");
         } catch(const std::exception& e) {
-            if(fsr4.load()==1) throw;
+            if(fsr4==1) throw;
             Log(ModLogLevel::Warning,"UPSCALER_AUTO FSR3/4 DX12 unavailable (%s); Auto selects FSR 3 DX11",e.what());
         }
         fsr4=0;
