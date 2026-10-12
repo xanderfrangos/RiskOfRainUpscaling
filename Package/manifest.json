@@ -1,6 +1,6 @@
 {
     "name": "RiskOfRainUpscaling",
-    "version_number": "1.0.2",
+    "version_number": "1.1.0",
     "website_url": "https://github.com/xanderfrangos/RiskOfRainUpscaling",
     "description": "Adds upscaling and frame generation to Risk of Rain 2. Offers NVIDIA DLSS and AMD FSR.",
     "dependencies": [

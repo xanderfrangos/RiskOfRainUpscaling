@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <!-- The mod version: assembly/file versions, Plugin.Version and the Thunderstore manifest all come from here. -->
-    <Version>1.0.2</Version>
+    <Version>1.1.0</Version>
     <Authors>Xander Frangos</Authors>
     <Company>$(Authors)</Company>
     <!-- Build.ps1 finds the game and passes GamePath; this default only serves direct dotnet builds. -->
