@@ -41,6 +41,8 @@ public:
     virtual unsigned PresentedFrames() const = 0;
     // Values match RiskOfRainUpscaling_UpscalerKind: 1 DLSS, 2 FSR3/4 DX12, 3 FSR 3 DX11.
     virtual int Kind() const = 0;
+    // End-of-effects (LDR) colour: true takes it sRGB-encoded, false as Unity's linear values.
+    virtual bool PerceptualLdr() const = 0;
 };
 // Values match [Upscaling] Upscaler and RiskOfRainUpscaling_SetUpscalerBackend.
 enum class UpscalerBackend { Auto, DLSS, FSR, FSR3DX11 }; // FSR is the FSR3/4 DX12 path.

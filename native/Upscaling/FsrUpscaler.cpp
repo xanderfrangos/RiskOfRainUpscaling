@@ -208,6 +208,7 @@ public:
     }
     unsigned PresentedFrames() const override { return 0; }
     int Kind() const override { return 2; }
+    bool PerceptualLdr() const override { return true; } // Declared to FSR as non-linear sRGB.
     bool DefaultIsFsr4() const { return FfxMajorVersion(defaultVersion)>=4; }
 };
 std::unique_ptr<UpscalerFeature> CreateFsrFeature(ID3D11Device* device) { return std::make_unique<FsrFeature>(device); }

@@ -25,14 +25,8 @@ static FfxResource Resource(ID3D11Texture2D* texture, FfxResourceStates state) {
     resource.resource=texture; resource.description=GetFfxResourceDescriptionDX11(texture); resource.state=state;
     return resource;
 }
-static DXGI_FORMAT SharedFormat(FfxSurfaceFormat format) {
-    switch(format) {
-    case FFX_SURFACE_FORMAT_R32_FLOAT: return DXGI_FORMAT_R32_FLOAT;
-    case FFX_SURFACE_FORMAT_R16G16_FLOAT: return DXGI_FORMAT_R16G16_FLOAT;
-    case FFX_SURFACE_FORMAT_R32_UINT: return DXGI_FORMAT_R32_UINT;
-    default: throw std::runtime_error("FSR DX11 shared resource format");
-    }
-}
+// The backend's own format mapping (ffx_dx11.cpp), defined without a header declaration.
+DXGI_FORMAT ffxGetDX11FormatFromSurfaceFormat_Fsr31(FfxSurfaceFormat);
 
 // AMD FSR 3.1 upscaling on Unity's own D3D11 device, through OptiScaler's
 // FidelityFX-SDK-DX11 port: the passes dispatch on the immediate context inside
@@ -51,14 +45,15 @@ class FsrDx11Feature final : public UpscalerFeature {
     // the application's, sized by the context and passed on every dispatch. Left
     // null, the passes write and read nothing: no motion, so history smears.
     ComPtr<ID3D11Texture2D> dilatedDepth, dilatedMotion, previousNearestDepth;
-    // Exposure 1 for LDR input, where FSR applies no auto exposure, as the DX12
-    // runtime does. With the shared resources bound, the port's internal default
-    // exposure (0, meaning 1) left the LDR output black in the fixtures.
+    // Exposure 1 for LDR input, where FSR applies no auto exposure: what the port's
+    // internal default (0, read as 1) and the DX12 runtime mean. Passed explicitly
+    // because one build gave black LDR output on the internal default; bindings and
+    // contents checked out and it has not reproduced since.
     ComPtr<ID3D11Texture2D> unitExposure;
 
     ComPtr<ID3D11Texture2D> Shared(const FfxCreateResourceDescription& description) {
         D3D11_TEXTURE2D_DESC d{}; d.Width=description.resourceDescription.width; d.Height=description.resourceDescription.height;
-        d.MipLevels=d.ArraySize=1; d.Format=SharedFormat(description.resourceDescription.format); d.SampleDesc.Count=1;
+        d.MipLevels=d.ArraySize=1; d.Format=ffxGetDX11FormatFromSurfaceFormat_Fsr31(description.resourceDescription.format); d.SampleDesc.Count=1;
         d.BindFlags=D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS;
         ComPtr<ID3D11Texture2D> texture;
         if(FAILED(device->CreateTexture2D(&d,nullptr,&texture))) { Log(ModLogLevel::Error,"FSR_DX11_FAILED shared resource %ux%u format=%d",d.Width,d.Height,d.Format); throw std::runtime_error("FSR DX11 shared resource"); }
@@ -82,14 +77,18 @@ class FsrDx11Feature final : public UpscalerFeature {
         create.flags=flags; create.maxRenderSize={renderWidth,renderHeight}; create.maxUpscaleSize={outputWidth,outputHeight};
         create.fpMessage=&UpscaleMessage; create.backendInterface=backend;
         RequireFfx(ffxFsr3UpscalerContextCreate(&context,&create),"FSR DX11 upscaling context");
-        created=true; contextFlags=flags;
-        FfxFsr3UpscalerSharedResourceDescriptions shared{};
-        RequireFfx(ffxFsr3UpscalerGetSharedResourceDescriptions(&context,&shared),"FSR DX11 shared resource descriptions");
-        dilatedDepth=Shared(shared.dilatedDepth); dilatedMotion=Shared(shared.dilatedMotionVectors); previousNearestDepth=Shared(shared.reconstructedPrevNearestDepth);
-        // 3.1.2 has no non-linear colour flag: the sRGB-encoded end-of-effects input is plain LDR.
-        Log("FSR_DX11_CONTEXT version=%d.%d.%d render=%ux%u output=%ux%u flags=0x%x hdr=%d autoExposure=%d depthInverted=%d perceptual=%d",
+        created=true;
+        // A context without its shared resources would dispatch with none (no motion):
+        // it is destroyed, so the next frame creates both again.
+        try {
+            FfxFsr3UpscalerSharedResourceDescriptions shared{};
+            RequireFfx(ffxFsr3UpscalerGetSharedResourceDescriptions(&context,&shared),"FSR DX11 shared resource descriptions");
+            dilatedDepth=Shared(shared.dilatedDepth); dilatedMotion=Shared(shared.dilatedMotionVectors); previousNearestDepth=Shared(shared.reconstructedPrevNearestDepth);
+        } catch(...) { DestroyContext(); throw; }
+        contextFlags=flags;
+        Log("FSR_DX11_CONTEXT version=%d.%d.%d render=%ux%u output=%ux%u flags=0x%x hdr=%d autoExposure=%d depthInverted=%d",
             FFX_FSR3UPSCALER_VERSION_MAJOR,FFX_FSR3UPSCALER_VERSION_MINOR,FFX_FSR3UPSCALER_VERSION_PATCH,renderWidth,renderHeight,outputWidth,outputHeight,
-            flags,current.hdr,current.hdr,frame.camera->reversedDepth,frame.perceptual);
+            flags,current.hdr,current.hdr,frame.camera->reversedDepth);
     }
 public:
     explicit FsrDx11Feature(ID3D11Device* value) : device(value) {
@@ -135,7 +134,8 @@ public:
         dispatch.dilatedDepth=Resource(dilatedDepth.Get(),FFX_RESOURCE_STATE_UNORDERED_ACCESS);
         dispatch.dilatedMotionVectors=Resource(dilatedMotion.Get(),FFX_RESOURCE_STATE_UNORDERED_ACCESS);
         dispatch.reconstructedPrevNearestDepth=Resource(previousNearestDepth.Get(),FFX_RESOURCE_STATE_UNORDERED_ACCESS);
-        if(!current.hdr) dispatch.exposure=Resource(unitExposure.Get(),FFX_RESOURCE_STATE_COMPUTE_READ);        // Jitter is the projection shift in render pixels (y down), as FSR expects.
+        if(!current.hdr) dispatch.exposure=Resource(unitExposure.Get(),FFX_RESOURCE_STATE_COMPUTE_READ);
+        // Jitter is the projection shift in render pixels (y down), as FSR expects.
         dispatch.jitterOffset={camera.jitterX,camera.jitterY};
         // Current-to-previous UV motion; FSR expects render pixels.
         dispatch.motionVectorScale={camera.motionScaleX*renderWidth,camera.motionScaleY*renderHeight};
@@ -152,5 +152,7 @@ public:
     }
     unsigned PresentedFrames() const override { return 0; }
     int Kind() const override { return 3; }
+    // FSR expects linear colour and 3.1.2 cannot be told otherwise (the non-linear flags came in 3.1.4).
+    bool PerceptualLdr() const override { return false; }
 };
 std::unique_ptr<UpscalerFeature> CreateFsrDx11Feature(ID3D11Device* device) { return std::make_unique<FsrDx11Feature>(device); }

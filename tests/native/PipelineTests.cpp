@@ -797,8 +797,8 @@ static int MotionFixture(ID3D11Device* device,ID3D11DeviceContext* immediate,IDX
     const float surroundings=std::max(above,below);
     ce(-1,c);RiskOfRainUpscaling_UpscalerDestroy(c);be(199,bc);RiskOfRainUpscaling_SceneInputsDestroy(bc);
     printf("MOTION %s error trail=%.4f square=%.4f background=%.4f\n",beforePost?"before-post HDR":"end-of-effects LDR",trail,square,surroundings);
-    // RTX 5080, HDR/LDR trail, square, background: DLSS .011/.017 .001/.005 .010/.018; both FSR paths
-    // .057/.058 .001/.004 .039/.063. FSR 3 DX11 without its shared dilated resources (no motion,
+    // RTX 5080, HDR/LDR trail, square, background: DLSS .011/.017 .001/.005 .010/.018; FSR 3 DX11
+    // .057/.057 .001/.002 .039/.063; FSR3/4 DX12 .057/.058 .001/.003 .039/.063. FSR 3 DX11 without its shared dilated resources (no motion,
     // smearing in game) measured .097/.103 .045/.062 .098/.103.
     if(trail>.08f || square>.02f || surroundings>.08f)return 249;
     printf("PASS: %s camera pan (%d render px/frame) with a square moving %d px/frame, %d frames %dx%d -> %dx%d: output matches the current frame (error trail %.3f, square %.3f, background %.3f).\n",

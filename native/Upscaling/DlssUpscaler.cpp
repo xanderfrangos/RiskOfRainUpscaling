@@ -193,6 +193,7 @@ public:
     }
     unsigned PresentedFrames() const override { return StreamlinePresentedFrames(); }
     int Kind() const override { return 1; }
+    bool PerceptualLdr() const override { return true; } // DLSS LDR mode expects display-encoded colour.
 };
 
 bool DlssEverReady() { return runtime->ready; }

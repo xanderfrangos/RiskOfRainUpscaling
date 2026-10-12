@@ -220,9 +220,9 @@ static void __stdcall EvaluateEvent(int event, void* pointer) {
             c->feature->Configure(options); c->temporalOutlines=options.alpha;
             c->ownsFeature=true; c->state=1;
             if(c->temporalOutlines) Log("TEMPORAL_OUTLINES alpha upscaling on; outline weight reconstructed by %s",c->Upscaling()?"DLSS":"DLAA");
-            // DLSS LDR mode expects display-encoded color: end-of-effects input is
-            // encoded as sRGB around evaluation and decoded afterward.
-            c->perceptual=!c->BeforePost();
+            // Backends that take display-encoded LDR color (DLSS, FSR3/4 DX12) get the
+            // end-of-effects input encoded as sRGB around evaluation and decoded afterward.
+            c->perceptual=!c->BeforePost() && c->feature->PerceptualLdr();
             if(c->BeforePost())
                 Log("UPSCALER_READY quality=%d render=%dx%d output=%dx%d placement=before-post-processing pre-tonemap HDR input=linear (NaN/Inf sanitized) write=%s autoExposure=1 motion=current-to-previous UV",
                     c->desc.quality,c->desc.width,c->desc.height,c->desc.outputWidth,c->desc.outputHeight,c->Upscaling()?"display-sized output":"scene in place");
